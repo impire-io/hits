@@ -28,3 +28,15 @@ Both binaries connect through NATS contexts (`nats context ls`):
 bin/hits-node    # run the service (Ctrl-C to stop)
 bin/hits ping    # ask the running service to identify itself
 ```
+
+## Releases
+
+Pushing a `v*` tag builds and publishes both binaries for every platform via
+goreleaser ([release workflow](.github/workflows/release.yml)); the tag's
+version is stamped into the binaries. CI runs the same gate as `make check`
+on every push and pull request.
+
+## License
+
+[Sustainable Use License](LICENSE) — free for internal business,
+non-commercial, and personal use.
