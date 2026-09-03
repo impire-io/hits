@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -152,7 +153,7 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	}
 	// Flush so the endpoint subscriptions have reached the server: once
 	// Start returns, a request from any connection must find a responder.
-	if err := nc.FlushWithContext(ctx); err != nil {
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		_ = svc.Stop()
 		cc.Stop()
 		_ = idx.close()

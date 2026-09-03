@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/micro"
@@ -66,7 +67,7 @@ func Start(ctx context.Context, nc *nats.Conn) (micro.Service, error) {
 	}
 	// Flush so the endpoint subscriptions have reached the server: once
 	// Start returns, a request from any connection must find a responder.
-	if err := nc.FlushWithContext(ctx); err != nil {
+	if err := nc.FlushTimeout(5 * time.Second); err != nil {
 		_ = svc.Stop()
 		return nil, fmt.Errorf("flush endpoint subscriptions: %w", err)
 	}
