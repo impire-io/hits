@@ -17,8 +17,6 @@ import (
 )
 
 const (
-	streamName        = "hits-ops"
-	itemOpsSubjects   = "hits.ops.item.>"
 	serviceName       = "hits-search"
 	serviceDesc       = "HITS full-text index — a projection of the ops-log"
 	queryEndpointName = "query"
@@ -51,9 +49,9 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jetstream: %w", err)
 	}
-	stream, err := js.Stream(ctx, streamName)
+	stream, err := js.Stream(ctx, contract.OpsStream)
 	if err != nil {
-		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", streamName, err)
+		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", contract.OpsStream, err)
 	}
 
 	idx, err := newBleveIndex()
@@ -64,7 +62,7 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	// Measure the backlog of item ops before consuming: the consumer is
 	// filtered, so the stream head alone cannot say when we are caught up —
 	// the head may be a project op the consumer never sees.
-	sinfo, err := stream.Info(ctx, jetstream.WithSubjectFilter(itemOpsSubjects))
+	sinfo, err := stream.Info(ctx, jetstream.WithSubjectFilter(contract.ItemOpsSubjects))
 	if err != nil {
 		_ = idx.close()
 		return nil, fmt.Errorf("stream info: %w", err)
@@ -75,7 +73,7 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	}
 
 	cons, err := stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
-		FilterSubjects: []string{itemOpsSubjects},
+		FilterSubjects: []string{contract.ItemOpsSubjects},
 	})
 	if err != nil {
 		_ = idx.close()

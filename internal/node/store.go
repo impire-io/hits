@@ -13,18 +13,12 @@ import (
 	"github.com/impire-io/hits/contract"
 )
 
-// The ops-log and projection resources, per hits-hq/02-DESIGN/ops-log.md.
+// The ops-log and projection resource names live in contract, declared
+// once for every service (hits-hq/02-DESIGN/hits-up.md § boundaries).
 const (
-	streamName           = "hits-ops"
-	opsSubjects          = "hits.ops.>"
-	itemSubjectPrefix    = "hits.ops.item."
-	projectSubjectPrefix = "hits.ops.project."
-	itemsBucket          = "hits-items"
-	projectsBucket       = "hits-projects"
-	metaBucket           = "hits-meta"
-	counterKey           = "item-counter"
-	itemHistory          = 10 // KV revisions kept per item — "the last few states"
-	maxWriteAttempts     = 8
+	counterKey       = "item-counter"
+	itemHistory      = 10 // KV revisions kept per item — "the last few states"
+	maxWriteAttempts = 8
 )
 
 // store owns the ops-log stream and its projections. The stream is the
@@ -44,14 +38,14 @@ func openStore(ctx context.Context, nc *nats.Conn) (*store, error) {
 		return nil, fmt.Errorf("jetstream: %w", err)
 	}
 	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:        streamName,
+		Name:        contract.OpsStream,
 		Description: "HITS ops-log — the source of record; items are kept forever",
-		Subjects:    []string{opsSubjects},
+		Subjects:    []string{contract.OpsSubjects},
 		Storage:     jetstream.FileStorage,
 		Retention:   jetstream.LimitsPolicy,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("ensure stream %s: %w", streamName, err)
+		return nil, fmt.Errorf("ensure stream %s: %w", contract.OpsStream, err)
 	}
 	s := &store{js: js, stream: stream}
 	for _, b := range []struct {
@@ -59,11 +53,11 @@ func openStore(ctx context.Context, nc *nats.Conn) (*store, error) {
 		cfg     jetstream.KeyValueConfig
 		purpose string
 	}{
-		{&s.items, jetstream.KeyValueConfig{Bucket: itemsBucket, History: itemHistory,
+		{&s.items, jetstream.KeyValueConfig{Bucket: contract.ItemsBucket, History: itemHistory,
 			Description: "item snapshots — a projection of the ops-log"}, "items"},
-		{&s.projects, jetstream.KeyValueConfig{Bucket: projectsBucket,
+		{&s.projects, jetstream.KeyValueConfig{Bucket: contract.ProjectsBucket,
 			Description: "the located-in vocabulary — a projection of the ops-log"}, "projects"},
-		{&s.meta, jetstream.KeyValueConfig{Bucket: metaBucket,
+		{&s.meta, jetstream.KeyValueConfig{Bucket: contract.MetaBucket,
 			Description: "operational state that is not derived from the log (the item id counter)"}, "meta"},
 	} {
 		kv, err := js.CreateOrUpdateKeyValue(ctx, b.cfg)
@@ -244,7 +238,7 @@ func (s *store) publishAndFold(ctx context.Context, current *contract.Item, rev 
 	if current != nil {
 		lastSeq = current.Seq
 	}
-	ack, err := s.js.Publish(ctx, itemSubjectPrefix+op.Entity, data,
+	ack, err := s.js.Publish(ctx, contract.ItemOpsPrefix+op.Entity, data,
 		jetstream.WithMsgID(op.ID),
 		jetstream.WithExpectLastSequencePerSubject(lastSeq))
 	if err != nil {
@@ -265,7 +259,7 @@ func (s *store) catchUp(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	subject := itemSubjectPrefix + id
+	subject := contract.ItemOpsPrefix + id
 	last, err := s.stream.GetLastMsgForSubject(ctx, subject)
 	if errors.Is(err, jetstream.ErrMsgNotFound) {
 		return nil // no ops at all; nothing to fold
@@ -309,7 +303,7 @@ func (s *store) replay(ctx context.Context) error {
 	if info.State.LastSeq == 0 {
 		return nil
 	}
-	return s.foldRange(ctx, []string{opsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
+	return s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
 		return s.foldOne(ctx, op, seq)
 	})
 }
@@ -406,7 +400,7 @@ func (s *store) registerProject(ctx context.Context, op contract.Op) (*contract.
 	if err != nil {
 		return nil, fmt.Errorf("encode op: %w", err)
 	}
-	ack, err := s.js.Publish(ctx, projectSubjectPrefix+op.Entity, data,
+	ack, err := s.js.Publish(ctx, contract.ProjectOpsPrefix+op.Entity, data,
 		jetstream.WithMsgID(op.ID),
 		jetstream.WithExpectLastSequencePerSubject(0))
 	if err != nil {

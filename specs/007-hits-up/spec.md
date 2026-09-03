@@ -32,8 +32,9 @@ A packaging change, not a topology change.
   it runs `hits-node` and the three index services and stops them all on
   `Stop`, fail-fast in both directions — any service that cannot start
   stops the ones already running and returns the error. It imports the
-  four service package roots and `contract`, nothing else; nothing imports
-  it back. depguard-enforced both ways, with the existing adapter denials
+  four service package roots and `contract` (plus the shared version
+  stamp, as the services themselves do), nothing else; nothing imports it
+  back. depguard-enforced both ways, with the existing adapter denials
   untouched. (hits-up § the composition)
 - **FR-02** `cmd/hits/main.go` dispatches `up` before the client CLI's
   parser ever sees the arguments, so `internal/cli` stays a pure client.
