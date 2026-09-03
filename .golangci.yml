@@ -29,11 +29,26 @@ linters:
           deny:
             - pkg: github.com/impire-io/hits/internal/index
               desc: services never import each other; share through the contract package
+            - pkg: github.com/impire-io/hits/internal/cli
+              desc: services never import the adapters
+            - pkg: github.com/impire-io/hits/internal/mcp
+              desc: services never import the adapters
         index-services-stand-alone:
           files: ["**/internal/index/**", "!$test"]
           deny:
             - pkg: github.com/impire-io/hits/internal/node
               desc: services never import each other; share through the contract package
+            - pkg: github.com/impire-io/hits/internal/cli
+              desc: services never import the adapters
+            - pkg: github.com/impire-io/hits/internal/mcp
+              desc: services never import the adapters
+        adapters-speak-client-only:
+          files: ["**/internal/cli/**", "**/internal/mcp/**", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/internal/node
+              desc: adapters reach the fleet through the client package, never a service's internals
+            - pkg: github.com/impire-io/hits/internal/index
+              desc: adapters reach the fleet through the client package, never a service's internals
     errcheck:
       # Writing to stdout/stderr and ignoring the (near-impossible) error is idiomatic.
       exclude-functions:

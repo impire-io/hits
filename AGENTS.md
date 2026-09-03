@@ -38,6 +38,10 @@ non-negotiables.
 
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
   an injectable connector).
+- `cmd/hits-mcp` — the MCP server binary, the agent action surface; thin main
+  over `internal/mcp` (stdio MCP via the official Go SDK, one tool per client
+  endpoint, actor fixed at startup). An adapter like the CLI, never a fleet
+  peer — the adapter boundary is depguard-enforced both ways.
 - `cmd/hits-node` — service binary; thin main over `internal/node`.
 - `cmd/hits-index-graph` — the graph index service; thin main over
   `internal/index/graph` (adjacency projection with derived project/actor
