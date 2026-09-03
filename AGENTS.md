@@ -39,6 +39,10 @@ non-negotiables.
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
   an injectable connector).
 - `cmd/hits-node` — service binary; thin main over `internal/node`.
+- `cmd/hits-index-search` — the full-text index service; thin main over
+  `internal/index/search` (a Bleve projection of the ops-log answering
+  `hits.search.query`). Index services never import `internal/node`, nor it
+  them (depguard-enforced).
 - `contract` — the shared platform contract: op envelope and catalog, item
   and project models, invariants, and the pure fold. Every service imports
   it; it imports no other hits package (depguard-enforced).

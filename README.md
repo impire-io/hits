@@ -13,6 +13,7 @@ code. Agents: read [AGENTS.md](AGENTS.md) first.
 |---|---|
 | `cmd/hits` | The terminal client (thin main; logic in `internal/cli`). |
 | `cmd/hits-node` | The micro-service daemon (thin main; logic in `internal/node`). |
+| `cmd/hits-index-search` | The full-text index service (thin main; logic in `internal/index/search`). |
 | `contract` | The shared platform contract: op envelope, item model, invariants, fold. |
 | `client` | The public Go client package — the one way callers talk to the service. |
 

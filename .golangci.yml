@@ -24,6 +24,16 @@ linters:
           deny:
             - pkg: github.com/impire-io/hits/internal
               desc: the client package is the wire surface; it never reaches into a service
+        node-stands-alone:
+          files: ["**/internal/node/**", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/internal/index
+              desc: services never import each other; share through the contract package
+        index-services-stand-alone:
+          files: ["**/internal/index/**", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/internal/node
+              desc: services never import each other; share through the contract package
     errcheck:
       # Writing to stdout/stderr and ignoring the (near-impossible) error is idiomatic.
       exclude-functions:
