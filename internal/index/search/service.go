@@ -150,6 +150,14 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 		_ = idx.close()
 		return nil, fmt.Errorf("add query endpoint: %w", err)
 	}
+	// Flush so the endpoint subscriptions have reached the server: once
+	// Start returns, a request from any connection must find a responder.
+	if err := nc.FlushWithContext(ctx); err != nil {
+		_ = svc.Stop()
+		cc.Stop()
+		_ = idx.close()
+		return nil, fmt.Errorf("flush endpoint subscriptions: %w", err)
+	}
 	return &Service{micro: svc, cons: cc, idx: idx}, nil
 }
 

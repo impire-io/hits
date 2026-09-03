@@ -64,6 +64,12 @@ func Start(ctx context.Context, nc *nats.Conn) (micro.Service, error) {
 			return nil, fmt.Errorf("add %s endpoint: %w", e.name, err)
 		}
 	}
+	// Flush so the endpoint subscriptions have reached the server: once
+	// Start returns, a request from any connection must find a responder.
+	if err := nc.FlushWithContext(ctx); err != nil {
+		_ = svc.Stop()
+		return nil, fmt.Errorf("flush endpoint subscriptions: %w", err)
+	}
 	return svc, nil
 }
 
