@@ -8,7 +8,8 @@
 settled by decisions
 [`0001`](../../../hits-hq/03-DECISIONS/0001-item-store-architecture.md) and
 [`0002`](../../../hits-hq/03-DECISIONS/0002-projects-and-actors.md).
-**Status:** draft — awaiting review before plan and implementation.
+**Status:** implemented on this branch ([plan.md](plan.md)) — awaiting review
+and merge.
 
 ## What this delivers
 

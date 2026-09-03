@@ -106,7 +106,7 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 		if err := decode(op, &p); err != nil {
 			return nil, err
 		}
-		it.Links = append(it.Links, Link{Type: p.Type, To: p.To})
+		it.Links = append(it.Links, Link(p))
 	case OpUnlinked:
 		var p LinkedPayload
 		if err := decode(op, &p); err != nil {
@@ -114,7 +114,7 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 		}
 		links := it.Links[:0]
 		for _, l := range it.Links {
-			if !(l.Type == p.Type && l.To == p.To) {
+			if l.Type != p.Type || l.To != p.To {
 				links = append(links, l)
 			}
 		}

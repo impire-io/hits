@@ -6,7 +6,24 @@ linters:
     - revive
     - misspell
     - unconvert
+    - depguard
   settings:
+    depguard:
+      # The service boundary (specs/001-item-store-core): contract is the one
+      # shared package and imports no other hits package; client imports only
+      # contract; services share through contract, never through each other.
+      # Each new service adds a rule here denying the other services' trees.
+      rules:
+        contract-is-a-leaf:
+          files: ["**/contract/*.go", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits
+              desc: the contract package imports no other hits package
+        client-speaks-contract-only:
+          files: ["**/client/*.go", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/internal
+              desc: the client package is the wire surface; it never reaches into a service
     errcheck:
       # Writing to stdout/stderr and ignoring the (near-impossible) error is idiomatic.
       exclude-functions:

@@ -315,8 +315,8 @@ func (s *store) replay(ctx context.Context) error {
 }
 
 func (s *store) foldOne(ctx context.Context, op contract.Op, seq uint64) error {
-	switch {
-	case op.Op == contract.OpRegistered:
+	switch op.Op {
+	case contract.OpRegistered:
 		current, rev, err := s.loadProject(ctx, op.Entity)
 		if err != nil {
 			return err
