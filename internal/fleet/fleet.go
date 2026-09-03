@@ -41,9 +41,11 @@ func ContextConnector(contextName string) Connector {
 
 // Config selects what the fleet runs. A zero Semantic means the semantic
 // index is not started — the fleet functions fully without it
-// (hits-hq/02-DESIGN/services.md § embeddings).
+// (hits-hq/02-DESIGN/services.md § embeddings). MaxBytes is the ops
+// stream's byte budget, 0 meaning the decided default (decision 0005).
 type Config struct {
 	Semantic semantic.Config
+	MaxBytes int64
 }
 
 // Fleet is one running composition.
@@ -85,7 +87,7 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	}
 
 	if err := startOne("hits-node", func(nc *nats.Conn) (func(), error) {
-		svc, err := node.Start(ctx, nc)
+		svc, err := node.Start(ctx, nc, node.Config{MaxBytes: cfg.MaxBytes})
 		if err != nil {
 			return nil, err
 		}
@@ -139,10 +141,13 @@ func (f *Fleet) Stop() {
 const upUsage = `hits up — run the HITS service fleet in this process
 
 Usage:
-  hits up [--context <name>] [--embedding-url <url> --embedding-model <m>]
+  hits up [--context <name>] [--max-bytes <size>]
+          [--embedding-url <url> --embedding-model <m>]
 
 The fleet serves the NATS system the context points at: hits-node plus the
-graph, search, and semantic indexes. The semantic index starts only when
+graph, search, and semantic indexes. Provisioning declares byte budgets —
+the ops stream defaults to 1G and refuses new writes when full; change it
+with --max-bytes (e.g. 2G). The semantic index starts only when
 --embedding-url and --embedding-model are both given (API key from
 $HITS_EMBEDDING_API_KEY). Runs in the foreground until interrupted.
 `
@@ -155,6 +160,7 @@ func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorF
 	fs.SetOutput(errOut)
 	fs.Usage = func() { fmt.Fprint(errOut, upUsage) }
 	ctxName := fs.String("context", "", "NATS context to connect with (default: the selected context)")
+	maxBytes := fs.String("max-bytes", "", "ops stream byte budget, e.g. 2G (default 1G)")
 	embedURL := fs.String("embedding-url", "", "base URL of the OpenAI-compatible embedding API (POST <url>/embeddings)")
 	embedModel := fs.String("embedding-model", "", "embedding model to request")
 	if err := fs.Parse(args); err != nil {
@@ -168,6 +174,13 @@ func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorF
 	}
 
 	cfg := Config{}
+	if *maxBytes != "" {
+		n, err := node.ParseSize(*maxBytes)
+		if err != nil {
+			return fmt.Errorf("--max-bytes: %w", err)
+		}
+		cfg.MaxBytes = n
+	}
 	if *embedURL != "" {
 		cfg.Semantic = semantic.Config{
 			BaseURL: *embedURL,

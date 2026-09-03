@@ -32,17 +32,23 @@ type store struct {
 	meta     jetstream.KeyValue
 }
 
-func openStore(ctx context.Context, nc *nats.Conn) (*store, error) {
+func openStore(ctx context.Context, nc *nats.Conn, cfg Config) (*store, error) {
 	js, err := jetstream.New(nc)
 	if err != nil {
 		return nil, fmt.Errorf("jetstream: %w", err)
 	}
+	// Every resource declares a byte budget, and the ops stream refuses new
+	// writes at its cap (DiscardNew) — full is an operational signal to
+	// raise the budget, never silent trimming of the source of record
+	// (hits-hq decision 0005).
 	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:        contract.OpsStream,
 		Description: "HITS ops-log — the source of record; items are kept forever",
 		Subjects:    []string{contract.OpsSubjects},
 		Storage:     jetstream.FileStorage,
 		Retention:   jetstream.LimitsPolicy,
+		MaxBytes:    cfg.opsMaxBytes(),
+		Discard:     jetstream.DiscardNew,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure stream %s: %w", contract.OpsStream, err)
@@ -54,10 +60,13 @@ func openStore(ctx context.Context, nc *nats.Conn) (*store, error) {
 		purpose string
 	}{
 		{&s.items, jetstream.KeyValueConfig{Bucket: contract.ItemsBucket, History: itemHistory,
+			MaxBytes:    cfg.itemsMaxBytes(),
 			Description: "item snapshots — a projection of the ops-log"}, "items"},
 		{&s.projects, jetstream.KeyValueConfig{Bucket: contract.ProjectsBucket,
+			MaxBytes:    smallBucketMaxBytes,
 			Description: "the located-in vocabulary — a projection of the ops-log"}, "projects"},
 		{&s.meta, jetstream.KeyValueConfig{Bucket: contract.MetaBucket,
+			MaxBytes:    smallBucketMaxBytes,
 			Description: "operational state that is not derived from the log (the item id counter)"}, "meta"},
 	} {
 		kv, err := js.CreateOrUpdateKeyValue(ctx, b.cfg)

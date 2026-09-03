@@ -27,7 +27,17 @@ func main() {
 
 func run() error {
 	ctxName := flag.String("context", "", "NATS context to connect with (default: the selected context)")
+	maxBytes := flag.String("max-bytes", "", "ops stream byte budget, e.g. 2G (default 1G)")
 	flag.Parse()
+
+	cfg := node.Config{}
+	if *maxBytes != "" {
+		n, err := node.ParseSize(*maxBytes)
+		if err != nil {
+			return fmt.Errorf("--max-bytes: %w", err)
+		}
+		cfg.MaxBytes = n
+	}
 
 	nc, _, err := natscontext.Connect(*ctxName, nats.Name("hits-node"))
 	if err != nil {
@@ -37,7 +47,7 @@ func run() error {
 
 	startCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	svc, err := node.Start(startCtx, nc)
+	svc, err := node.Start(startCtx, nc, cfg)
 	if err != nil {
 		return err
 	}

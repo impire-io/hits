@@ -43,7 +43,7 @@ func startStore(t *testing.T) *harness {
 	}
 	t.Cleanup(svcConn.Close)
 
-	svc, err := node.Start(context.Background(), svcConn)
+	svc, err := node.Start(context.Background(), svcConn, node.Config{})
 	if err != nil {
 		t.Fatalf("start node: %v", err)
 	}

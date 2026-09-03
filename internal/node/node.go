@@ -17,11 +17,12 @@ import (
 	"github.com/impire-io/hits/internal/version"
 )
 
-// Start ensures the ops-log stream and projection buckets exist, heals the
-// projections by replay, and registers the hits micro service on the given
-// connection. Stopping the returned service is the caller's job.
-func Start(ctx context.Context, nc *nats.Conn) (micro.Service, error) {
-	st, err := openStore(ctx, nc)
+// Start ensures the ops-log stream and projection buckets exist (with the
+// byte budgets cfg carries), heals the projections by replay, and registers
+// the hits micro service on the given connection. Stopping the returned
+// service is the caller's job.
+func Start(ctx context.Context, nc *nats.Conn, cfg Config) (micro.Service, error) {
+	st, err := openStore(ctx, nc, cfg)
 	if err != nil {
 		return nil, err
 	}
