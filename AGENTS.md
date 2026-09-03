@@ -39,7 +39,11 @@ non-negotiables.
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
   an injectable connector).
 - `cmd/hits-node` — service binary; thin main over `internal/node`.
+- `contract` — the shared platform contract: op envelope and catalog, item
+  and project models, invariants, and the pure fold. Every service imports
+  it; it imports no other hits package (depguard-enforced).
 - `client` — the public Go client package. It also declares the wire contract
-  (subjects, payload types); `internal/node` implements it.
+  (subjects, payload types); `internal/node` implements it. Imports only
+  `contract` (depguard-enforced).
 - `internal/version` — the build-stamped version shared by both binaries.
 - `internal/natstest` — test-only embedded NATS server.

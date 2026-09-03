@@ -17,7 +17,7 @@ import (
 // as a micro service on a real NATS server, the client requesting on the
 // contract subject, and the payload coming back intact.
 func TestPingRoundTrip(t *testing.T) {
-	url := natstest.Start(t)
+	url := natstest.StartJetStream(t)
 
 	svcConn, err := nats.Connect(url)
 	if err != nil {
@@ -25,7 +25,7 @@ func TestPingRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(svcConn.Close)
 
-	svc, err := node.Start(svcConn)
+	svc, err := node.Start(context.Background(), svcConn)
 	if err != nil {
 		t.Fatalf("start node: %v", err)
 	}
