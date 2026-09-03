@@ -190,13 +190,24 @@ func TestItemLifecycle(t *testing.T) {
 	out = run(t, connect, "transition", id, "--to", "located")
 	wantContains(t, out, "located")
 
-	out = run(t, connect, "transition", id, "--to", "resolved",
+	out = run(t, connect, "resolve", id,
 		"--fixed-by", "commit:abc123 folded the fix",
 		"--amended-design", "02-DESIGN/services.md")
 	wantContains(t, out, "resolved",
 		"fixed-by: commit:abc123 — folded the fix",
 		"amended-design: 02-DESIGN/services.md",
 		"closed: ")
+}
+
+// TestWontfixCommand closes an item through the other sugar verb.
+func TestWontfixCommand(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	id := itemID(t, run(t, connect, "create", "--type", "bug", "cosmetic misalignment"))
+	out := run(t, connect, "wontfix", id)
+	wantContains(t, out, "wontfix", "closed: ")
 }
 
 func TestLinkEditTombstone(t *testing.T) {

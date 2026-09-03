@@ -28,7 +28,8 @@ hits [--context <name>] [--actor <handle>] [--json] <command>
   create      open an item            claim      record intent to work
   get         one item's snapshot     release    hand a claim back
   edit        non-lifecycle changes   block      block, remembering status
-  transition  move the status        unblock    restore interrupted status
+  transition  move the status         unblock    restore interrupted status
+  resolve     close as fixed          wontfix    close without a fix
   link        assert a typed edge     note       append a trail entry
   unlink      retract an edge         tombstone  void a filing mistake
 
@@ -50,7 +51,7 @@ hits [--context <name>] [--actor <handle>] [--json] <command>
 
 ## Requirements
 
-- **FR-01** Every `client` package endpoint has exactly one command:
+- **FR-01** Every `client` package endpoint has a command:
   the twelve item verbs, `project register`/`project list`, `search`,
   `semantic`, `graph neighbors`/`graph walk`, plus the existing `ping` and
   `version`. The CLI calls only the `client` package — never raw subjects.
@@ -75,6 +76,11 @@ hits [--context <name>] [--actor <handle>] [--json] <command>
   (item-model § properties)
 - **FR-06** `hits <command> -h` and bare `hits` print usage; an unknown
   command or malformed flags print usage and fail.
+- **FR-07** The closing transitions get sugar verbs: `resolve` and
+  `wontfix` preset `--to` and share `transition`'s remaining flags and
+  code path — the general form stays. Human ergonomics are the CLI's job;
+  the sugar is presentation only, never a second wire path.
+  (how-we-build § headless)
 
 ## Constitution check
 

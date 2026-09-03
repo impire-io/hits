@@ -169,8 +169,25 @@ func parseFixRef(s string) (contract.FixRef, error) {
 }
 
 func runTransition(inv *invocation) error {
-	fs := inv.flagSet("transition", "transition <id> --to <status> [flags]")
-	to := fs.String("to", "", "target status")
+	return transitionCmd(inv, "transition", "transition <id> --to <status> [flags]", "")
+}
+
+func runResolve(inv *invocation) error {
+	return transitionCmd(inv, "resolve", "resolve <id> [flags]", contract.Resolved)
+}
+
+func runWontfix(inv *invocation) error {
+	return transitionCmd(inv, "wontfix", "wontfix <id> [flags]", contract.Wontfix)
+}
+
+// transitionCmd is the one body behind transition and the closing sugar
+// verbs: a non-empty preset fixes the target and drops the --to flag.
+func transitionCmd(inv *invocation, name, usage string, preset contract.Status) error {
+	fs := inv.flagSet(name, usage)
+	var to *string
+	if preset == "" {
+		to = fs.String("to", "", "target status")
+	}
 	var projects multiFlag
 	fs.Var(&projects, "project", "located-in project slug (repeatable)")
 	var fixedBy multiFlag
@@ -187,9 +204,13 @@ func runTransition(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	if *to == "" {
-		fs.Usage()
-		return errors.New("transition: --to is required")
+	target := preset
+	if preset == "" {
+		if *to == "" {
+			fs.Usage()
+			return errors.New("transition: --to is required")
+		}
+		target = contract.Status(*to)
 	}
 	refs := make([]contract.FixRef, 0, len(fixedBy))
 	for _, s := range fixedBy {
@@ -212,7 +233,7 @@ func runTransition(inv *invocation) error {
 	item, err := c.TransitionItem(inv.ctx, client.TransitionItemRequest{
 		Actor:         actor,
 		ID:            id,
-		To:            contract.Status(*to),
+		To:            target,
 		LocatedIn:     projects,
 		FixedBy:       refs,
 		AmendedDesign: amended,

@@ -30,6 +30,8 @@ Item commands (the actor comes from --actor or $HITS_ACTOR):
   get         one item's snapshot:    get <id>
   edit        non-lifecycle changes:  edit <id> [flags]
   transition  move the status:        transition <id> --to <status> [flags]
+  resolve     close as fixed:         resolve <id> [--fixed-by <ref>] [flags]
+  wontfix     close without a fix:    wontfix <id> [flags]
   claim       record intent to work:  claim <id> [--steal]
   release     hand a claim back:      release <id>
   block       block on something:     block <id> [--by <what>]
@@ -105,6 +107,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runEdit(inv)
 	case "transition":
 		return runTransition(inv)
+	case "resolve":
+		return runResolve(inv)
+	case "wontfix":
+		return runWontfix(inv)
 	case "claim":
 		return runClaim(inv)
 	case "release":

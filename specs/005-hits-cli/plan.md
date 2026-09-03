@@ -33,6 +33,9 @@ surface does not earn a CLI framework (minimal build).
 - **`--fixed-by` parsing**: `kind:ref[ note]` — kind one of `pr`, `commit`,
   `action`; everything after the first space is the evidence note. Colons
   in the ref survive (split once).
+- **Closing verbs are presets.** `resolve` and `wontfix` share
+  `transition`'s one body with the target fixed and the `--to` flag
+  dropped — same flags otherwise, same client call.
 - **Human rendering** (`print.go`): an item as a labeled block — id, type,
   status, priority on the head line, then report, reporter/created, claim,
   block, located-in, closing refs, notes, links; empty fields omitted.
