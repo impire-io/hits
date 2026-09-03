@@ -157,38 +157,61 @@ func TestStartWithoutEmbeddings(t *testing.T) {
 	}
 }
 
-// TestStartFailFast proves a service that cannot start takes the whole
-// composition down: the error surfaces and nothing is left answering.
-func TestStartFailFast(t *testing.T) {
-	url := natstest.StartJetStream(t)
-	ctx := testCtx(t)
-
-	dial := connector(url)
+// TestStartConnectRefused proves a refused connection surfaces as the
+// Start error with no fleet returned.
+func TestStartConnectRefused(t *testing.T) {
 	refuse := errors.New("connection refused by test")
-	failing := func(natsName string) (*nats.Conn, error) {
-		if natsName == "hits-index-search" {
-			return nil, refuse
-		}
-		return dial(natsName)
-	}
-
-	f, err := fleet.Start(ctx, failing, fleet.Config{})
+	f, err := fleet.Start(testCtx(t), func(string) (*nats.Conn, error) {
+		return nil, refuse
+	}, fleet.Config{})
 	if !errors.Is(err, refuse) {
 		t.Fatalf("start error = %v, want the refused connect", err)
 	}
 	if f != nil {
 		t.Fatal("a failed Start must not return a fleet")
 	}
+}
 
-	nc, _ := probe(t, url)
-	eventually(t, "the node to be off the wire", func() bool {
-		_, err := nc.Request(client.PingSubject, nil, 250*time.Millisecond)
-		return errors.Is(err, nats.ErrNoResponders)
-	})
+// TestStartFailFast proves a service that cannot start takes the whole
+// composition down: on a JetStream-less server the first service fails
+// after the connection succeeded, and Start closes that connection on
+// its way out.
+func TestStartFailFast(t *testing.T) {
+	url := natstest.Start(t) // no JetStream: hits-node cannot provision
+	ctx := testCtx(t)
+
+	var mu sync.Mutex
+	var conns []*nats.Conn
+	dial := connector(url)
+	tracking := func(natsName string) (*nats.Conn, error) {
+		nc, err := dial(natsName)
+		if err == nil {
+			mu.Lock()
+			conns = append(conns, nc)
+			mu.Unlock()
+		}
+		return nc, err
+	}
+
+	f, err := fleet.Start(ctx, tracking, fleet.Config{})
+	if err == nil || !strings.Contains(err.Error(), "hits-node") {
+		t.Fatalf("start error = %v, want hits-node failing to provision", err)
+	}
+	if f != nil {
+		t.Fatal("a failed Start must not return a fleet")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(conns) != 1 {
+		t.Fatalf("fleet opened %d connections, want the one shared connection", len(conns))
+	}
+	if !conns[0].IsClosed() {
+		t.Error("the shared connection is still open after a failed Start")
+	}
 }
 
 // TestStopStopsEverything proves Stop is total: no service answers and
-// every connection the fleet opened is closed.
+// the one shared connection the fleet opened is closed.
 func TestStopStopsEverything(t *testing.T) {
 	url := natstest.StartJetStream(t)
 	ctx := testCtx(t)
@@ -219,13 +242,11 @@ func TestStopStopsEverything(t *testing.T) {
 	})
 	mu.Lock()
 	defer mu.Unlock()
-	if len(conns) != 3 {
-		t.Fatalf("fleet opened %d connections, want 3", len(conns))
+	if len(conns) != 1 {
+		t.Fatalf("fleet opened %d connections, want the one shared connection (decision 0006)", len(conns))
 	}
-	for _, nc := range conns {
-		if !nc.IsClosed() {
-			t.Error("a fleet connection is still open after Stop")
-		}
+	if !conns[0].IsClosed() {
+		t.Error("the shared connection is still open after Stop")
 	}
 }
 

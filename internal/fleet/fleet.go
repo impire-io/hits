@@ -1,9 +1,9 @@
 // Package fleet composes the four HITS services into one process — the
 // `hits up` subcommand (hits-hq/02-DESIGN/hits-up.md). It calls the same
-// Start entrypoints the standalone cmd/ mains call, each service on its own
-// connection under its standalone nats.Name, so server-side the composition
-// is indistinguishable from four binaries: a packaging change, not a
-// topology change.
+// Start entrypoints the standalone cmd/ mains call, all on one shared
+// connection named hits-up (decision 0006): micro services multiplex on
+// it, and the whole platform costs a single seat in the account's
+// connection allowance.
 package fleet
 
 import (
@@ -25,13 +25,14 @@ import (
 	"github.com/impire-io/hits/internal/version"
 )
 
-// Connector opens the NATS connection one service talks through; it is
-// called once per service with that service's nats.Name. Production
-// resolves a NATS context; tests inject connections to an embedded server.
+// Connector opens the one NATS connection the whole fleet talks through;
+// it is called once, with the composition's nats.Name ("hits-up").
+// Production resolves a NATS context; tests inject a connection to an
+// embedded server.
 type Connector func(natsName string) (*nats.Conn, error)
 
-// ContextConnector yields the production Connector: every service resolves
-// the same named NATS context ("" means the selected one).
+// ContextConnector yields the production Connector: the fleet's connection
+// resolves the named NATS context ("" means the selected one).
 func ContextConnector(contextName string) Connector {
 	return func(natsName string) (*nats.Conn, error) {
 		nc, _, err := natscontext.Connect(contextName, nats.Name(natsName))
@@ -51,14 +52,14 @@ type Config struct {
 // Fleet is one running composition.
 type Fleet struct {
 	Running []string // the services started, in start order
-	URL     string   // the server the first connection landed on
+	URL     string   // the server the fleet's connection landed on
 	stops   []func()
 }
 
-// Start brings the fleet up, fail-fast: any service that cannot start
-// stops the ones already running, closes their connections, and returns
-// the error. hits-node goes first — it ensures the ops-log stream the
-// indexers refuse to start without.
+// Start brings the fleet up on one shared connection, fail-fast: any
+// service that cannot start stops the ones already running, closes the
+// connection, and returns the error. hits-node goes first — it ensures
+// the ops-log stream the indexers refuse to start without.
 func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	f := &Fleet{}
 	ok := false
@@ -68,16 +69,15 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 		}
 	}()
 
-	startOne := func(name string, start func(nc *nats.Conn) (stop func(), err error)) error {
-		nc, err := connect(name)
-		if err != nil {
-			return fmt.Errorf("%s: connect: %w", name, err)
-		}
-		f.stops = append(f.stops, nc.Close)
-		if f.URL == "" {
-			f.URL = nc.ConnectedUrl()
-		}
-		stop, err := start(nc)
+	nc, err := connect("hits-up")
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	f.stops = append(f.stops, nc.Close)
+	f.URL = nc.ConnectedUrl()
+
+	startOne := func(name string, start func() (stop func(), err error)) error {
+		stop, err := start()
 		if err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
@@ -86,7 +86,7 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 		return nil
 	}
 
-	if err := startOne("hits-node", func(nc *nats.Conn) (func(), error) {
+	if err := startOne("hits-node", func() (func(), error) {
 		svc, err := node.Start(ctx, nc, node.Config{MaxBytes: cfg.MaxBytes})
 		if err != nil {
 			return nil, err
@@ -95,7 +95,7 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := startOne("hits-index-graph", func(nc *nats.Conn) (func(), error) {
+	if err := startOne("hits-index-graph", func() (func(), error) {
 		svc, err := graph.Start(ctx, nc)
 		if err != nil {
 			return nil, err
@@ -104,7 +104,7 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := startOne("hits-index-search", func(nc *nats.Conn) (func(), error) {
+	if err := startOne("hits-index-search", func() (func(), error) {
 		svc, err := search.Start(ctx, nc)
 		if err != nil {
 			return nil, err
@@ -114,7 +114,7 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 		return nil, err
 	}
 	if cfg.Semantic != (semantic.Config{}) {
-		if err := startOne("hits-index-semantic", func(nc *nats.Conn) (func(), error) {
+		if err := startOne("hits-index-semantic", func() (func(), error) {
 			svc, err := semantic.Start(ctx, nc, cfg.Semantic)
 			if err != nil {
 				return nil, err
@@ -129,8 +129,9 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	return f, nil
 }
 
-// Stop tears the composition down in reverse start order — each service
-// off the wire before its connection closes. Safe to call more than once.
+// Stop tears the composition down in reverse start order — every service
+// off the wire before the shared connection closes. Safe to call more
+// than once.
 func (f *Fleet) Stop() {
 	for i := len(f.stops) - 1; i >= 0; i-- {
 		f.stops[i]()
