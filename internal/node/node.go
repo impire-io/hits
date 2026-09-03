@@ -1,9 +1,11 @@
-// Package node runs the hits micro service. Everything callers can do exists
-// as a NATS micro endpoint here; the wire contract (subjects, payload types)
-// is declared by the client package and implemented in this one.
+// Package node runs the hits micro service: the single writer of the
+// ops-log, the state projections folded from it, and the hits.api endpoint
+// surface. The wire contract (subjects, payload types) is declared by the
+// client package and implemented in this one.
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -14,9 +16,19 @@ import (
 	"github.com/impire-io/hits/internal/version"
 )
 
-// Start registers the hits micro service on the given connection and returns
-// the running service. Stopping it is the caller's job.
-func Start(nc *nats.Conn) (micro.Service, error) {
+// Start ensures the ops-log stream and projection buckets exist, heals the
+// projections by replay, and registers the hits micro service on the given
+// connection. Stopping the returned service is the caller's job.
+func Start(ctx context.Context, nc *nats.Conn) (micro.Service, error) {
+	st, err := openStore(ctx, nc)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.replay(ctx); err != nil {
+		return nil, fmt.Errorf("replay ops-log: %w", err)
+	}
+	h := &handlers{st: st}
+
 	svc, err := micro.AddService(nc, micro.Config{
 		Name:        "hits",
 		Version:     version.Version,
@@ -25,10 +37,32 @@ func Start(nc *nats.Conn) (micro.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("register service: %w", err)
 	}
-	if err := svc.AddEndpoint("ping", micro.HandlerFunc(handlePing),
-		micro.WithEndpointSubject(client.PingSubject)); err != nil {
-		_ = svc.Stop()
-		return nil, fmt.Errorf("add ping endpoint: %w", err)
+	endpoints := []struct {
+		name    string
+		subject string
+		handler micro.HandlerFunc
+	}{
+		{"ping", client.PingSubject, handlePing},
+		{"create", client.CreateSubject, h.create},
+		{"get", client.GetSubject, h.get},
+		{"edit", client.EditSubject, h.edit},
+		{"transition", client.TransitionSubject, h.transition},
+		{"claim", client.ClaimSubject, h.claim},
+		{"release", client.ReleaseSubject, h.release},
+		{"block", client.BlockSubject, h.block},
+		{"unblock", client.UnblockSubject, h.unblock},
+		{"link", client.LinkSubject, h.link},
+		{"unlink", client.UnlinkSubject, h.unlink},
+		{"note", client.NoteSubject, h.note},
+		{"tombstone", client.TombstoneSubject, h.tombstone},
+		{"project-register", client.RegisterProjectSubject, h.registerProject},
+		{"project-list", client.ListProjectsSubject, h.listProjects},
+	}
+	for _, e := range endpoints {
+		if err := svc.AddEndpoint(e.name, e.handler, micro.WithEndpointSubject(e.subject)); err != nil {
+			_ = svc.Stop()
+			return nil, fmt.Errorf("add %s endpoint: %w", e.name, err)
+		}
 	}
 	return svc, nil
 }
@@ -36,7 +70,7 @@ func Start(nc *nats.Conn) (micro.Service, error) {
 func handlePing(req micro.Request) {
 	reply, err := json.Marshal(client.About{Name: "hits", Version: version.Version})
 	if err != nil {
-		_ = req.Error("500", "encode reply: "+err.Error(), nil)
+		_ = req.Error("internal", "encode reply: "+err.Error(), nil)
 		return
 	}
 	_ = req.Respond(reply)

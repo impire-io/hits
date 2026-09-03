@@ -3,11 +3,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/synadia-io/orbit.go/natscontext"
@@ -33,7 +35,9 @@ func run() error {
 	}
 	defer nc.Close()
 
-	svc, err := node.Start(nc)
+	startCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	svc, err := node.Start(startCtx, nc)
 	if err != nil {
 		return err
 	}

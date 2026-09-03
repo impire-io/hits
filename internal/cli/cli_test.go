@@ -19,14 +19,14 @@ import (
 func startNode(t *testing.T) cli.Connector {
 	t.Helper()
 
-	url := natstest.Start(t)
+	url := natstest.StartJetStream(t)
 	svcConn, err := nats.Connect(url)
 	if err != nil {
 		t.Fatalf("connect service side: %v", err)
 	}
 	t.Cleanup(svcConn.Close)
 
-	svc, err := node.Start(svcConn)
+	svc, err := node.Start(context.Background(), svcConn)
 	if err != nil {
 		t.Fatalf("start node: %v", err)
 	}
