@@ -39,6 +39,9 @@ non-negotiables.
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
   an injectable connector).
 - `cmd/hits-node` — service binary; thin main over `internal/node`.
+- `cmd/hits-index-graph` — the graph index service; thin main over
+  `internal/index/graph` (adjacency projection with derived project/actor
+  edges, serving `hits.graph.*`).
 - `cmd/hits-index-search` — the full-text index service; thin main over
   `internal/index/search` (a Bleve projection of the ops-log answering
   `hits.search.query`). Index services never import `internal/node`, nor it
