@@ -16,11 +16,14 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/fleet"
 	"github.com/impire-io/hits/internal/index/semantic"
 	"github.com/impire-io/hits/internal/natstest"
+	"github.com/impire-io/hits/internal/node"
 )
 
 func testCtx(t *testing.T) context.Context {
@@ -334,4 +337,79 @@ func bagOfWords(text string) []float32 {
 		}
 	}
 	return vec
+}
+
+// streamConfig reads one stream's live config through a probe connection.
+func streamConfig(t *testing.T, js jetstream.JetStream, name string) jetstream.StreamConfig {
+	t.Helper()
+	s, err := js.Stream(testCtx(t), name)
+	if err != nil {
+		t.Fatalf("stream %s: %v", name, err)
+	}
+	return s.CachedInfo().Config
+}
+
+// TestStartOnMaxBytesRequiredAccount reproduces issue 003: an account that
+// requires every stream config to declare max bytes — Synadia Cloud's
+// shape — must boot the fleet on the default budgets, with the ops stream
+// refusing (never trimming) at its cap.
+func TestStartOnMaxBytesRequiredAccount(t *testing.T) {
+	url := natstest.StartJetStreamMaxBytesRequired(t)
+	ctx := testCtx(t)
+
+	f, err := fleet.Start(ctx, connector(url), fleet.Config{})
+	if err != nil {
+		t.Fatalf("start fleet on a max-bytes-required account: %v", err)
+	}
+	t.Cleanup(f.Stop)
+
+	nc, c := probe(t, url)
+	if _, err := c.Ping(ctx); err != nil {
+		t.Fatalf("ping: %v", err)
+	}
+
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	ops := streamConfig(t, js, contract.OpsStream)
+	if ops.MaxBytes != node.DefaultMaxBytes {
+		t.Errorf("ops stream budget = %d, want the default %d", ops.MaxBytes, int64(node.DefaultMaxBytes))
+	}
+	if ops.Discard != jetstream.DiscardNew {
+		t.Errorf("ops stream discard = %v, want DiscardNew — full must refuse, never trim", ops.Discard)
+	}
+	if got := streamConfig(t, js, "KV_"+contract.ItemsBucket).MaxBytes; got != node.DefaultMaxBytes/4 {
+		t.Errorf("items bucket budget = %d, want a quarter of the ops budget", got)
+	}
+	for _, bucket := range []string{contract.ProjectsBucket, contract.MetaBucket} {
+		if got := streamConfig(t, js, "KV_"+bucket).MaxBytes; got != 8<<20 {
+			t.Errorf("%s budget = %d, want 8 MiB", bucket, got)
+		}
+	}
+}
+
+// TestMaxBytesOverride proves the one knob reaches the stream and scales
+// the items bucket with it.
+func TestMaxBytesOverride(t *testing.T) {
+	url := natstest.StartJetStreamMaxBytesRequired(t)
+	ctx := testCtx(t)
+
+	f, err := fleet.Start(ctx, connector(url), fleet.Config{MaxBytes: 64 << 20})
+	if err != nil {
+		t.Fatalf("start fleet with --max-bytes 64M: %v", err)
+	}
+	t.Cleanup(f.Stop)
+
+	nc, _ := probe(t, url)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	if got := streamConfig(t, js, contract.OpsStream).MaxBytes; got != 64<<20 {
+		t.Errorf("ops stream budget = %d, want the 64 MiB override", got)
+	}
+	if got := streamConfig(t, js, "KV_"+contract.ItemsBucket).MaxBytes; got != 16<<20 {
+		t.Errorf("items bucket budget = %d, want 16 MiB (a quarter of the override)", got)
+	}
 }

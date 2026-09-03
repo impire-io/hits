@@ -35,7 +35,7 @@ func startStore(t *testing.T) *harness {
 		t.Fatalf("connect service side: %v", err)
 	}
 	t.Cleanup(svcConn.Close)
-	svc, err := node.Start(context.Background(), svcConn)
+	svc, err := node.Start(context.Background(), svcConn, node.Config{})
 	if err != nil {
 		t.Fatalf("start node: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestReplayReproducesProjections(t *testing.T) {
 			t.Fatalf("delete bucket %s: %v", bucket, err)
 		}
 	}
-	svc, err := node.Start(ctx, h.svcConn)
+	svc, err := node.Start(ctx, h.svcConn, node.Config{})
 	if err != nil {
 		t.Fatalf("restart node: %v", err)
 	}
