@@ -43,8 +43,10 @@ hits up --context hits
 
 That single process runs the whole service fleet — the item store plus the
 graph and full-text indexes. Nothing to provision first: the ops-log stream
-and its projections are created on boot. Runs in the foreground until
-interrupted.
+and its projections are created on boot. The fleet shares one NATS
+connection, and every resource declares a byte budget (1 GiB for the ops
+log by default — some accounts, Synadia Cloud included, require one);
+change it with `--max-bytes 2G`. Runs in the foreground until interrupted.
 
 **4. Work with it.** Every write names an actor — set `HITS_ACTOR` (or pass
 `--actor`) to your handle:
