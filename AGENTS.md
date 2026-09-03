@@ -43,6 +43,9 @@ non-negotiables.
   `internal/index/search` (a Bleve projection of the ops-log answering
   `hits.search.query`). Index services never import `internal/node`, nor it
   them (depguard-enforced).
+- `cmd/hits-index-semantic` — the semantic index service; thin main over
+  `internal/index/semantic` (chromem-go embedding projection with a
+  configurable OpenAI-compatible provider, serving `hits.semantic.query`).
 - `contract` — the shared platform contract: op envelope and catalog, item
   and project models, invariants, and the pure fold. Every service imports
   it; it imports no other hits package (depguard-enforced).

@@ -7,6 +7,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.14.6
 	github.com/nats-io/nats.go v1.53.1
 	github.com/nats-io/nuid v1.0.1
+	github.com/philippgille/chromem-go v0.7.0
 	github.com/synadia-io/orbit.go/natscontext v0.1.3
 )
 
