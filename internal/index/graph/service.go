@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	streamName  = "hits-ops"
 	serviceName = "hits-graph"
 	serviceDesc = "HITS graph index — a projection of the ops-log"
 	maxDepth    = 5
@@ -48,9 +47,9 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jetstream: %w", err)
 	}
-	stream, err := js.Stream(ctx, streamName)
+	stream, err := js.Stream(ctx, contract.OpsStream)
 	if err != nil {
-		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", streamName, err)
+		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", contract.OpsStream, err)
 	}
 	sinfo, err := stream.Info(ctx)
 	if err != nil {

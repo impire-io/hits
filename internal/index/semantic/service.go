@@ -18,10 +18,8 @@ import (
 )
 
 const (
-	streamName      = "hits-ops"
-	itemOpsSubjects = "hits.ops.item.>"
-	serviceName     = "hits-semantic"
-	serviceDesc     = "HITS semantic index — an embedding projection of the ops-log"
+	serviceName = "hits-semantic"
+	serviceDesc = "HITS semantic index — an embedding projection of the ops-log"
 )
 
 // Service is one running hits-semantic instance.
@@ -49,11 +47,11 @@ func Start(ctx context.Context, nc *nats.Conn, cfg Config) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jetstream: %w", err)
 	}
-	stream, err := js.Stream(ctx, streamName)
+	stream, err := js.Stream(ctx, contract.OpsStream)
 	if err != nil {
-		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", streamName, err)
+		return nil, fmt.Errorf("ops-log stream %q not found (is hits-node running?): %w", contract.OpsStream, err)
 	}
-	sinfo, err := stream.Info(ctx, jetstream.WithSubjectFilter(itemOpsSubjects))
+	sinfo, err := stream.Info(ctx, jetstream.WithSubjectFilter(contract.ItemOpsSubjects))
 	if err != nil {
 		return nil, fmt.Errorf("stream info: %w", err)
 	}
@@ -67,7 +65,7 @@ func Start(ctx context.Context, nc *nats.Conn, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	cons, err := stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
-		FilterSubjects: []string{itemOpsSubjects},
+		FilterSubjects: []string{contract.ItemOpsSubjects},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ordered consumer: %w", err)

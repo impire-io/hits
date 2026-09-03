@@ -47,6 +47,10 @@ Vocabulary and queries:
   semantic    nearest items to a text: semantic <text> [--limit <n>]
   graph       edges at a node: neighbors <id> | walk <id>  [flags]
 
+Run the platform:
+  up          run the service fleet in this process (flags follow the
+              subcommand — see 'hits up -h')
+
 Service:
   ping        ask the running service to identify itself
   version     print the client version

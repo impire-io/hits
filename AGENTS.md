@@ -37,7 +37,14 @@ non-negotiables.
 ## Layout
 
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
-  an injectable connector).
+  an injectable connector). Its `up` subcommand runs the whole service fleet
+  in one process, dispatched to `internal/fleet` before the client parser so
+  the client tree never imports service code.
+- `internal/fleet` — the composition root behind `hits up`: starts all four
+  services fail-fast, each on its own connection under its standalone
+  `nats.Name`; the semantic index only when the embedding provider is
+  configured (`hits-hq/02-DESIGN/hits-up.md`). Nothing imports it back —
+  depguard-enforced, like the rest of the boundary.
 - `cmd/hits-mcp` — the MCP server binary, the agent action surface; thin main
   over `internal/mcp` (stdio MCP via the official Go SDK, one tool per client
   endpoint, actor fixed at startup). An adapter like the CLI, never a fleet
