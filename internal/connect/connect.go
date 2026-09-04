@@ -1,10 +1,10 @@
 // Package connect is the one seam every hits binary connects through
-// (hits-hq 02-DESIGN/idp-auth.md, decisions 0008-0010). It resolves a
-// context name — hits' own context directory first, then the nats CLI's —
-// and opens the NATS connection via natscontext either way: a hits context
-// by its file path, a nats context by name. The one delta a hits context
-// can carry is an oauth block, which layers a token handler that feeds the
-// current access token into every connect and reconnect.
+// (hits-hq 02-DESIGN/idp-auth.md, decisions 0008-0011). It resolves a
+// context name against hits' own context directory — the only source of
+// connection configuration — and opens the connection by feeding the
+// context's nats subtree to natscontext. The one delta a context's oauth
+// block adds is a token handler that feeds the current access token into
+// every connect and reconnect.
 //
 // HITS owns the exchange; the deployment's auth callout owns validation.
 package connect
@@ -18,28 +18,27 @@ import (
 	"github.com/synadia-io/orbit.go/natscontext"
 )
 
-// Connect resolves the named context ("" means the configured default, else
-// the nats CLI's selected one) and opens the connection under natsName.
+// Connect resolves the named context ("" means the configured default)
+// and opens the connection under natsName. No context configured at all
+// is the default NATS URL, reached without touching the nats CLI's state
+// (decision 0011).
 func Connect(contextName, natsName string) (*nats.Conn, error) {
 	name, err := effectiveName(contextName)
 	if err != nil {
 		return nil, err
 	}
 
-	ref, err := lookup(name)
+	opts := []nats.Option{nats.Name(natsName)}
+	if name == "" {
+		return nats.Connect("", opts...)
+	}
+
+	hc, err := loadHitsContext(name)
 	if err != nil {
 		return nil, err
 	}
 
-	opts := []nats.Option{nats.Name(natsName)}
-	if ref.hits == nil {
-		// A nats CLI context (or no context at all): natscontext's own
-		// path, exactly as before this package existed.
-		nc, _, err := natscontext.Connect(name, opts...)
-		return nc, err
-	}
-
-	if oc := ref.hits.OAuth; oc != nil {
+	if oc := hc.OAuth; oc != nil {
 		if _, err := cacheFor(name).read(); err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
 				return nil, fmt.Errorf("no token for context %q: run 'hits auth login --context %s'", name, name)
@@ -48,6 +47,12 @@ func Connect(contextName, natsName string) (*nats.Conn, error) {
 		}
 		opts = append(opts, nats.TokenHandler(tokenHandler(name, oc)))
 	}
-	nc, _, err := natscontext.Connect(ref.hits.path, opts...)
+
+	path, cleanup, err := hc.natsSubtreeFile()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	nc, _, err := natscontext.Connect(path, opts...)
 	return nc, err
 }

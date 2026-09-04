@@ -31,11 +31,13 @@ non-negotiables.
 - **One surface**: everything callable goes through the `client` package's
   contract; no side doors, no HTTP-first parallel surface.
 - **Connections go through `internal/connect`** — the one seam, resolving
-  hits contexts (`$XDG_CONFIG_HOME/hits/context/`, the nats context schema
-  plus an `oauth` block) or nats CLI contexts, both loaded via
-  `github.com/synadia-io/orbit.go/natscontext`. Never hand-rolled URLs,
-  never a direct `natscontext` dial outside the seam
-  (`hits-hq/02-DESIGN/idp-auth.md`).
+  hits contexts (`$XDG_CONFIG_HOME/hits/context/`: hits-owned documents,
+  the NATS connection nested under `nats` in the natscontext schema, plus
+  the optional `oauth` block), loaded via
+  `github.com/synadia-io/orbit.go/natscontext`. The nats CLI's contexts
+  are an import source for `hits context import`, never read at connect
+  time. Never hand-rolled URLs, never a direct `natscontext` dial outside
+  the seam (`hits-hq/02-DESIGN/idp-auth.md`, decision 0011).
 - Commits are signed. `.claude/settings.local.json` is never committed.
 
 ## Layout

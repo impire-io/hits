@@ -52,7 +52,7 @@ func writeAuthContext(t *testing.T, cfgHome string, idp *httptest.Server) {
 		t.Fatal(err)
 	}
 	body := map[string]any{
-		"url":   "nats://127.0.0.1:1",
+		"nats":  map[string]any{"url": "nats://127.0.0.1:1"},
 		"oauth": map[string]any{"issuer": idp.URL, "client_id": "hits-test"},
 	}
 	b, err := json.Marshal(body)
@@ -108,12 +108,16 @@ func TestAuthGlobalContextFlag(t *testing.T) {
 	}
 }
 
-// TestAuthRejectsNonOAuthTargets: a name with no oauth block is refused
-// before anything interactive starts.
+// TestAuthRejectsNonOAuthTargets: a name that lives only in the nats
+// CLI's directory does not resolve at all (decision 0011), and a hits
+// context without an oauth block is refused before anything interactive
+// starts.
 func TestAuthRejectsNonOAuthTargets(t *testing.T) {
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("EDITOR", "") // context add must not spawn the ambient editor
+
 	dir := filepath.Join(cfgHome, "nats", "context")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -123,7 +127,13 @@ func TestAuthRejectsNonOAuthTargets(t *testing.T) {
 	}
 
 	err := runErr(t, guardConnector(t), "auth", "login", "--context", "plain")
-	if !strings.Contains(err.Error(), "not a hits context") {
-		t.Fatalf("login on a nats context: got %v", err)
+	if !strings.Contains(err.Error(), "hits context import plain") {
+		t.Fatalf("login on a nats-only name: got %v", err)
+	}
+
+	run(t, guardConnector(t), "context", "add", "nooauth", "--url", "nats://x:4222")
+	err = runErr(t, guardConnector(t), "auth", "login", "--context", "nooauth")
+	if !strings.Contains(err.Error(), "no oauth block") {
+		t.Fatalf("login without oauth block: got %v", err)
 	}
 }

@@ -19,21 +19,17 @@ func resolveOAuth(explicit string) (string, *hitsContext, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	ref, err := lookup(name)
+	if name == "" {
+		return "", nil, errors.New("no context: pass --context or run 'hits context select <name>'")
+	}
+	hc, err := loadHitsContext(name)
 	if err != nil {
 		return "", nil, err
 	}
-	if ref.hits == nil {
-		if name == "" {
-			return "", nil, errors.New("no context: pass --context or set a default")
-		}
-		return "", nil, fmt.Errorf(
-			"context %q is not a hits context: auth works on %s/<name>.json with an oauth block", name, hitsContextDir())
+	if hc.OAuth == nil {
+		return "", nil, fmt.Errorf("context %q has no oauth block (%s): nothing to log in to", name, hc.path)
 	}
-	if ref.hits.OAuth == nil {
-		return "", nil, fmt.Errorf("context %q has no oauth block (%s): nothing to log in to", name, ref.hits.path)
-	}
-	return name, ref.hits, nil
+	return name, hc, nil
 }
 
 // Login runs the device authorization grant for the named context and

@@ -47,3 +47,38 @@ func DefaultActor() string {
 	}
 	return cfg.Defaults.Actor
 }
+
+// saveDefaultContext records the select verb's one write: defaults.context,
+// preserving every other field the file carries — the config schema may
+// grow around this writer.
+func saveDefaultContext(name string) error {
+	path := configPath()
+	doc := map[string]any{}
+	b, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return fmt.Errorf("client config: parse %s: %w", path, err)
+		}
+	case errors.Is(err, fs.ErrNotExist):
+	default:
+		return fmt.Errorf("client config: %w", err)
+	}
+	defaults, _ := doc["defaults"].(map[string]any)
+	if defaults == nil {
+		defaults = map[string]any{}
+	}
+	defaults["context"] = name
+	doc["defaults"] = defaults
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("client config: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("client config: %w", err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
+		return fmt.Errorf("client config: %w", err)
+	}
+	return nil
+}
