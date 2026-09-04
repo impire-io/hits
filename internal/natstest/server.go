@@ -34,6 +34,20 @@ func StartWithToken(t *testing.T, token string) (url string) {
 	})
 }
 
+// StartWithUserPass runs an in-process NATS server that authorizes
+// clients by username and password — the shape the plain connection
+// settings' --user/--password address. The server is shut down when the
+// test ends.
+func StartWithUserPass(t *testing.T, user, password string) (url string) {
+	t.Helper()
+	return start(t, &server.Options{
+		Host:     "127.0.0.1",
+		Port:     -1, // pick a random free port
+		Username: user,
+		Password: password,
+	})
+}
+
 // StartJetStream runs an in-process NATS server with JetStream enabled,
 // storing state in a per-test temp dir. The server is shut down when the
 // test ends.
