@@ -20,6 +20,7 @@ import (
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/fleet"
 	"github.com/impire-io/hits/internal/index/semantic"
 	"github.com/impire-io/hits/internal/natstest"
@@ -253,7 +254,7 @@ func TestStopStopsEverything(t *testing.T) {
 // TestRunUpRefusesHalfConfiguredEmbeddings proves the usage error fires
 // before anything dials.
 func TestRunUpRefusesHalfConfiguredEmbeddings(t *testing.T) {
-	guard := func(string) fleet.Connector {
+	guard := func(string, connect.Direct) fleet.Connector {
 		return func(string) (*nats.Conn, error) {
 			t.Error("dialed despite invalid flags")
 			return nil, errors.New("guard")
@@ -271,6 +272,59 @@ func TestRunUpRefusesHalfConfiguredEmbeddings(t *testing.T) {
 	}
 }
 
+// TestRunUpRefusesContextPlusConnectionFlags proves a context and plain
+// connection flags do not combine, and that the error fires before
+// anything dials (hits-hq/02-DESIGN/hits-up.md § plain connection
+// settings).
+func TestRunUpRefusesContextPlusConnectionFlags(t *testing.T) {
+	guard := func(string, connect.Direct) fleet.Connector {
+		return func(string) (*nats.Conn, error) {
+			t.Error("dialed despite invalid flags")
+			return nil, errors.New("guard")
+		}
+	}
+	for _, args := range [][]string{
+		{"--context", "prod", "--server", "nats://localhost:4222"},
+		{"--context", "prod", "--creds", "some.creds"},
+		{"--context", "prod", "--user", "u", "--password", "p"},
+	} {
+		var out, errOut bytes.Buffer
+		err := fleet.RunUp(testCtx(t), args, &out, &errOut, guard)
+		if err == nil || !strings.Contains(err.Error(), "not both") {
+			t.Errorf("RunUp(%v) error = %v, want the not-both usage error", args, err)
+		}
+	}
+}
+
+// TestRunUpHandsConnectionFlagsToTheConnector proves the parsed flags
+// reach the connector factory as the seam's Direct settings.
+func TestRunUpHandsConnectionFlagsToTheConnector(t *testing.T) {
+	var gotCtx string
+	var gotDirect connect.Direct
+	refuse := errors.New("stop before starting services")
+	spy := func(contextName string, d connect.Direct) fleet.Connector {
+		gotCtx, gotDirect = contextName, d
+		return func(string) (*nats.Conn, error) { return nil, refuse }
+	}
+
+	var out, errOut bytes.Buffer
+	err := fleet.RunUp(testCtx(t), []string{
+		"--server", "nats://a:4222,nats://b:4222",
+		"--creds", "ngs.creds",
+		"--tlsca", "ca.pem",
+	}, &out, &errOut, spy)
+	if !errors.Is(err, refuse) {
+		t.Fatalf("RunUp error = %v, want the refusing connector's", err)
+	}
+	if gotCtx != "" {
+		t.Errorf("context name = %q, want empty", gotCtx)
+	}
+	want := connect.Direct{Servers: "nats://a:4222,nats://b:4222", Creds: "ngs.creds", TLSCA: "ca.pem"}
+	if gotDirect != want {
+		t.Errorf("direct settings = %+v, want %+v", gotDirect, want)
+	}
+}
+
 // TestRunUpNoticeLine proves the full up path: fleet started through RunUp,
 // the semantic-off notice printed, and a clean exit on cancellation.
 func TestRunUpNoticeLine(t *testing.T) {
@@ -281,7 +335,7 @@ func TestRunUpNoticeLine(t *testing.T) {
 	out := &syncBuffer{}
 	done := make(chan error, 1)
 	go func() {
-		done <- fleet.RunUp(ctx, nil, out, out, func(string) fleet.Connector { return connector(url) })
+		done <- fleet.RunUp(ctx, nil, out, out, func(string, connect.Direct) fleet.Connector { return connector(url) })
 	}()
 
 	eventually(t, "the startup and notice lines", func() bool {

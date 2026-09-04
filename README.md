@@ -28,23 +28,32 @@ go install github.com/impire-io/hits/cmd/hits@latest
 go install github.com/impire-io/hits/cmd/hits-mcp@latest
 ```
 
-**2. Point it at a NATS system.** Connections resolve through
-[NATS contexts](https://docs.nats.io/using-nats/nats-tools/nats_cli#nats-contexts).
-The system needs JetStream enabled; one account (or JetStream domain) hosts
-one HITS.
+**2. Point it at a NATS system.** The system needs JetStream enabled; one
+account (or JetStream domain) hosts one HITS. For configuration worth
+keeping, save a hits context; the client commands connect through one:
+
+```sh
+hits context add hits          # scaffold a context file and edit it, or
+hits context import hits       # wrap an existing nats CLI context
+```
+
+**3. Run the platform** — against a context, or with the connection
+passed directly. The plain flags are named as the nats CLI names them
+(`--server`, `--creds`, `--user`/`--password`, `--nkey`,
+`--tlscert`/`--tlskey`, `--tlsca`), and each falls back to the nats CLI's
+environment variable (`NATS_URL`, `NATS_CREDS`, ...) — handy in CI and
+containers, where the environment is the configuration:
 
 ```sh
 # your own server
-nats context save hits --server nats://localhost:4222
+hits up --server nats://localhost:4222
 
-# Synadia Cloud: point at NGS with the creds file of a JetStream-enabled account
-nats context save hits --server tls://connect.ngs.global --creds ~/ngs/hits.creds
-```
+# Synadia Cloud: NGS with the creds file of a JetStream-enabled account
+hits up --server tls://connect.ngs.global --creds ~/ngs/hits.creds
 
-**3. Run the platform.**
-
-```sh
+# a saved context, or the NATS_* environment
 hits up --context hits
+NATS_URL=nats://localhost:4222 hits up
 ```
 
 That single process runs the whole service fleet — the item store plus the

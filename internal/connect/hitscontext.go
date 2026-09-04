@@ -89,21 +89,26 @@ func (hc *hitsContext) checkTokenConflict(name string) error {
 	return nil
 }
 
-// natsSubtreeFile writes the nats subtree to a 0600 file in a fresh 0700
+// natsSubtreeFile hands the context's nats subtree to the loader shim.
+func (hc *hitsContext) natsSubtreeFile() (string, func(), error) {
+	subtree := hc.NATS
+	if len(subtree) == 0 {
+		subtree = []byte("{}")
+	}
+	return subtreeFile(subtree)
+}
+
+// subtreeFile writes a nats settings document to a 0600 file in a fresh
 // temp directory for natscontext's loader, which accepts only a name or a
 // file path — no exported Settings entry point (decision 0011 proposes
 // one upstream; this shim disappears if it lands). The caller removes the
 // directory via the returned func.
-func (hc *hitsContext) natsSubtreeFile() (string, func(), error) {
+func subtreeFile(subtree []byte) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "hits-context-")
 	if err != nil {
 		return "", nil, fmt.Errorf("context temp dir: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
-	subtree := hc.NATS
-	if len(subtree) == 0 {
-		subtree = []byte("{}")
-	}
 	path := filepath.Join(dir, "nats.json")
 	if err := os.WriteFile(path, subtree, 0o600); err != nil {
 		cleanup()

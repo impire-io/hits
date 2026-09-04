@@ -31,12 +31,13 @@ import (
 // embedded server.
 type Connector func(natsName string) (*nats.Conn, error)
 
-// ContextConnector yields the production Connector: the fleet's connection
-// resolves the named context — hits' own or the nats CLI's ("" means the
-// configured default, else the selected one).
-func ContextConnector(contextName string) Connector {
+// DialConnector yields the production Connector: the fleet's connection
+// resolves the named context, or the plain connection settings when given
+// — both zero means the configured default (hits-hq 02-DESIGN/hits-up.md
+// § plain connection settings).
+func DialConnector(contextName string, d connect.Direct) Connector {
 	return func(natsName string) (*nats.Conn, error) {
-		return connect.Connect(contextName, natsName)
+		return connect.Dial(contextName, d, natsName)
 	}
 }
 
@@ -142,25 +143,42 @@ func (f *Fleet) Stop() {
 const upUsage = `hits up — run the HITS service fleet in this process
 
 Usage:
-  hits up [--context <name>] [--max-bytes <size>]
+  hits up [--context <name> | --server <urls> [connection flags]]
+          [--max-bytes <size>]
           [--embedding-url <url> --embedding-model <m>]
 
-The fleet serves the NATS system the context points at: hits-node plus the
-graph, search, and semantic indexes. Provisioning declares byte budgets —
-the ops stream defaults to 1G and refuses new writes when full; change it
-with --max-bytes (e.g. 2G). The semantic index starts only when
---embedding-url and --embedding-model are both given (API key from
-$HITS_EMBEDDING_API_KEY). Runs in the foreground until interrupted.
+The fleet serves one NATS system: the named hits context's, or the one
+the plain connection flags describe — --server (comma-separated URLs),
+--creds, --user/--password, --nkey, --tlscert/--tlskey, --tlsca. Each
+connection flag falls back to the nats CLI's environment variable
+($NATS_URL, $NATS_CREDS, $NATS_USER, $NATS_PASSWORD, $NATS_NKEY,
+$NATS_CERT, $NATS_KEY, $NATS_CA); a context and connection flags do not
+combine. It runs hits-node plus the graph, search, and semantic indexes.
+
+Provisioning declares byte budgets — the ops stream defaults to 1G and
+refuses new writes when full; change it with --max-bytes (e.g. 2G). The
+semantic index starts only when --embedding-url and --embedding-model
+are both given (API key from $HITS_EMBEDDING_API_KEY). Runs in the
+foreground until interrupted.
 `
 
 // RunUp executes the up subcommand: parse the flags, start the fleet
-// through the Connector the factory yields for --context, and hold it
-// until ctx ends. args excludes the "up" word itself.
-func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorFor func(contextName string) Connector) error {
+// through the Connector the factory yields for --context or the plain
+// connection flags, and hold it until ctx ends. args excludes the "up"
+// word itself.
+func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorFor func(contextName string, d connect.Direct) Connector) error {
 	fs := flag.NewFlagSet("hits up", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() { fmt.Fprint(errOut, upUsage) }
-	ctxName := fs.String("context", "", "NATS context to connect with (default: the selected context)")
+	ctxName := fs.String("context", "", "hits context to connect with (default: the configured default)")
+	server := fs.String("server", "", "NATS server URLs, comma-separated ($NATS_URL)")
+	creds := fs.String("creds", "", "NATS credentials file ($NATS_CREDS)")
+	user := fs.String("user", "", "NATS username ($NATS_USER)")
+	password := fs.String("password", "", "NATS password ($NATS_PASSWORD)")
+	nkey := fs.String("nkey", "", "NATS nkey seed file ($NATS_NKEY)")
+	tlscert := fs.String("tlscert", "", "TLS client certificate file ($NATS_CERT)")
+	tlskey := fs.String("tlskey", "", "TLS client key file ($NATS_KEY)")
+	tlsca := fs.String("tlsca", "", "TLS CA bundle file ($NATS_CA)")
 	maxBytes := fs.String("max-bytes", "", "ops stream byte budget, e.g. 2G (default 1G)")
 	embedURL := fs.String("embedding-url", "", "base URL of the OpenAI-compatible embedding API (POST <url>/embeddings)")
 	embedModel := fs.String("embedding-model", "", "embedding model to request")
@@ -169,6 +187,13 @@ func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorF
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	direct := connect.Direct{
+		Servers: *server, Creds: *creds, User: *user, Password: *password,
+		Nkey: *nkey, TLSCert: *tlscert, TLSKey: *tlskey, TLSCA: *tlsca,
+	}
+	if *ctxName != "" && direct != (connect.Direct{}) {
+		return errors.New("a context carries its own connection: pass --context or the plain connection flags, not both")
 	}
 	if (*embedURL == "") != (*embedModel == "") {
 		return errors.New("--embedding-url and --embedding-model go together; pass both or neither")
@@ -190,7 +215,7 @@ func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorF
 		}
 	}
 
-	f, err := Start(ctx, connectorFor(*ctxName), cfg)
+	f, err := Start(ctx, connectorFor(*ctxName, direct), cfg)
 	if err != nil {
 		return err
 	}
