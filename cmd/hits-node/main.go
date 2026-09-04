@@ -11,9 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
-
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/node"
 	"github.com/impire-io/hits/internal/version"
 )
@@ -26,7 +24,7 @@ func main() {
 }
 
 func run() error {
-	ctxName := flag.String("context", "", "NATS context to connect with (default: the selected context)")
+	ctxName := flag.String("context", "", "context to connect with (default: the configured or selected one)")
 	maxBytes := flag.String("max-bytes", "", "ops stream byte budget, e.g. 2G (default 1G)")
 	flag.Parse()
 
@@ -39,7 +37,7 @@ func run() error {
 		cfg.MaxBytes = n
 	}
 
-	nc, _, err := natscontext.Connect(*ctxName, nats.Name("hits-node"))
+	nc, err := connect.Connect(*ctxName, "hits-node")
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}

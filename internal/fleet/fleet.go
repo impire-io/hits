@@ -16,8 +16,8 @@ import (
 	"strings"
 
 	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
 
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/index/graph"
 	"github.com/impire-io/hits/internal/index/search"
 	"github.com/impire-io/hits/internal/index/semantic"
@@ -32,11 +32,11 @@ import (
 type Connector func(natsName string) (*nats.Conn, error)
 
 // ContextConnector yields the production Connector: the fleet's connection
-// resolves the named NATS context ("" means the selected one).
+// resolves the named context — hits' own or the nats CLI's ("" means the
+// configured default, else the selected one).
 func ContextConnector(contextName string) Connector {
 	return func(natsName string) (*nats.Conn, error) {
-		nc, _, err := natscontext.Connect(contextName, nats.Name(natsName))
-		return nc, err
+		return connect.Connect(contextName, natsName)
 	}
 }
 

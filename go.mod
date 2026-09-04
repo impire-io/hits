@@ -4,12 +4,14 @@ go 1.26.0
 
 require (
 	github.com/blevesearch/bleve/v2 v2.6.1
+	github.com/gofrs/flock v0.13.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/nats-io/nats-server/v2 v2.14.6
 	github.com/nats-io/nats.go v1.53.1
 	github.com/nats-io/nuid v1.0.1
 	github.com/philippgille/chromem-go v0.7.0
 	github.com/synadia-io/orbit.go/natscontext v0.1.3
+	golang.org/x/oauth2 v0.35.0
 )
 
 require (
@@ -49,7 +51,6 @@ require (
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

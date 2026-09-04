@@ -15,9 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
-
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/index/semantic"
 	"github.com/impire-io/hits/internal/version"
 )
@@ -30,7 +28,7 @@ func main() {
 }
 
 func run() error {
-	ctxName := flag.String("context", "", "NATS context to connect with (default: the selected context)")
+	ctxName := flag.String("context", "", "context to connect with (default: the configured or selected one)")
 	embedURL := flag.String("embedding-url", "", "base URL of the OpenAI-compatible embedding API (POST <url>/embeddings)")
 	embedModel := flag.String("embedding-model", "", "embedding model to request")
 	flag.Parse()
@@ -44,7 +42,7 @@ func run() error {
 		Model:   *embedModel,
 	}
 
-	nc, _, err := natscontext.Connect(*ctxName, nats.Name("hits-index-semantic"))
+	nc, err := connect.Connect(*ctxName, "hits-index-semantic")
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
