@@ -7,7 +7,8 @@ settled by decision
 [`0011`](../../../hits-hq/03-DECISIONS/0011-standalone-hits-contexts.md),
 which supersedes 0010's schema and resolution; rooted in hits-hq issue
 [`006-standalone-contexts-rework`](../../../hits-hq/04-ISSUES/006-standalone-contexts-rework/00-report.md).
-**Status:** in progress on this branch ([plan.md](plan.md)).
+**Status:** implemented on this branch ([plan.md](plan.md)) — awaiting
+review and merge.
 
 ## What this delivers
 
