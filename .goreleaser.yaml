@@ -41,6 +41,34 @@ archives:
       - README.md
       - LICENSE
 
+# One formula installing both binaries from the platform archive. It is
+# pushed to impire-io/homebrew-tap on every release — RCs included,
+# deliberately: pre-v1 the candidates ARE the releases, and the tap is
+# the one-command install path (no Go toolchain, nothing edited).
+# Needs the HOMEBREW_TAP_TOKEN repo secret (fine-grained PAT, contents
+# read/write on the tap repo) — the workflow passes it through.
+brews:
+  - name: hits
+    ids: [hits]
+    repository:
+      owner: impire-io
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/impire-io/hits
+    description: "Headless, agent-native issue tracking"
+    skip_upload: false
+    commit_msg_template: "brew: hits {{ .Tag }}"
+    commit_author:
+      name: hits-release
+      email: noreply@impire.io
+    install: |
+      bin.install "hits"
+      bin.install "hits-mcp"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/hits version")
+
 checksum:
   name_template: checksums.txt
 

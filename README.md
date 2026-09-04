@@ -12,10 +12,16 @@ repo: read [AGENTS.md](AGENTS.md) first.
 
 ## Getting started
 
-**1. Get the binaries.** Download the archive for your platform from the
-[releases page](https://github.com/impire-io/hits/releases) — it contains
-`hits` (the CLI, which can also run the whole platform) and `hits-mcp` (the
-MCP server for agents). Or build from source:
+**1. Get the binaries.** One brew install gets both `hits` (the CLI, which
+can also run the whole platform) and `hits-mcp` (the MCP server for agents):
+
+```sh
+brew install impire-io/tap/hits
+```
+
+Or download the archive for your platform from the
+[releases page](https://github.com/impire-io/hits/releases), or build from
+source:
 
 ```sh
 go install github.com/impire-io/hits/cmd/hits@latest
