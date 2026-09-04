@@ -17,10 +17,10 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/version"
 )
 
@@ -29,11 +29,14 @@ import (
 // server.
 type Connector func(contextName string) (*nats.Conn, error)
 
-// ContextConnector resolves the named NATS context ("" means the selected one).
+// ContextConnector resolves the named context — hits' own or the nats
+// CLI's ("" means the configured default, else the selected one).
 func ContextConnector(contextName string) (*nats.Conn, error) {
-	nc, _, err := natscontext.Connect(contextName, nats.Name("hits-mcp"))
-	return nc, err
+	return connect.Connect(contextName, "hits-mcp")
 }
+
+// defaultActor is indirected so Run's connect parameter keeps its name.
+var defaultActor = connect.DefaultActor
 
 // Run executes the server: parse flags, resolve and validate the actor,
 // connect and ping the fleet — all fail-fast — then serve MCP over stdio
@@ -55,7 +58,10 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 		actor = os.Getenv("HITS_ACTOR")
 	}
 	if actor == "" {
-		return errors.New("no actor: pass --actor or set HITS_ACTOR")
+		actor = defaultActor()
+	}
+	if actor == "" {
+		return errors.New("no actor: pass --actor, set HITS_ACTOR, or set a default in the client config")
 	}
 	if !contract.ValidActor(actor) {
 		return fmt.Errorf("actor %q is not a well-formed handle", actor)

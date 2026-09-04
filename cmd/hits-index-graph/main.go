@@ -12,9 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
-
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/index/graph"
 	"github.com/impire-io/hits/internal/version"
 )
@@ -27,10 +25,10 @@ func main() {
 }
 
 func run() error {
-	ctxName := flag.String("context", "", "NATS context to connect with (default: the selected context)")
+	ctxName := flag.String("context", "", "context to connect with (default: the configured or selected one)")
 	flag.Parse()
 
-	nc, _, err := natscontext.Connect(*ctxName, nats.Name("hits-index-graph"))
+	nc, err := connect.Connect(*ctxName, "hits-index-graph")
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}

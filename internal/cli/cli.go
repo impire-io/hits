@@ -14,9 +14,9 @@ import (
 	"strings"
 
 	"github.com/nats-io/nats.go"
-	"github.com/synadia-io/orbit.go/natscontext"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/internal/connect"
 	"github.com/impire-io/hits/internal/version"
 )
 
@@ -51,6 +51,9 @@ Run the platform:
   up          run the service fleet in this process (flags follow the
               subcommand — see 'hits up -h')
 
+Authentication (hits contexts with an oauth block):
+  auth        IDP device-flow login: login | status | logout  [--context <name>]
+
 Service:
   ping        ask the running service to identify itself
   version     print the client version
@@ -63,10 +66,10 @@ Run 'hits <command> -h' for a command's flags.
 // resolves a NATS context; tests inject a connection to an embedded server.
 type Connector func(contextName string) (*nats.Conn, error)
 
-// ContextConnector resolves the named NATS context ("" means the selected one).
+// ContextConnector resolves the named context — hits' own or the nats
+// CLI's ("" means the configured default, else the selected one).
 func ContextConnector(contextName string) (*nats.Conn, error) {
-	nc, _, err := natscontext.Connect(contextName, nats.Name("hits"))
-	return nc, err
+	return connect.Connect(contextName, "hits")
 }
 
 // invocation carries one parsed CLI call: the global flags, the arguments
@@ -139,6 +142,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runSemantic(inv)
 	case "graph":
 		return runGraph(inv)
+	case "auth":
+		return runAuth(inv)
 	case "ping":
 		return runPing(inv)
 	case "version":
@@ -173,7 +178,10 @@ func (inv *invocation) actorOrErr() (string, error) {
 	if a := os.Getenv("HITS_ACTOR"); a != "" {
 		return a, nil
 	}
-	return "", errors.New("no actor: pass --actor or set HITS_ACTOR")
+	if a := connect.DefaultActor(); a != "" {
+		return a, nil
+	}
+	return "", errors.New("no actor: pass --actor, set HITS_ACTOR, or set a default in the client config")
 }
 
 // dial connects and wraps the connection in the client; the returned func
