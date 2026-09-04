@@ -33,11 +33,11 @@ func TestConfigDefaults(t *testing.T) {
 	if zero.opsMaxBytes() != DefaultMaxBytes {
 		t.Errorf("zero ops budget = %d, want the default %d", zero.opsMaxBytes(), int64(DefaultMaxBytes))
 	}
-	if zero.itemsMaxBytes() != DefaultMaxBytes/4 {
-		t.Errorf("zero items budget = %d, want a quarter of the default", zero.itemsMaxBytes())
+	if zero.stateMaxBytes() != DefaultMaxBytes/4 {
+		t.Errorf("zero state budget = %d, want a quarter of the default", zero.stateMaxBytes())
 	}
 	set := Config{MaxBytes: 64 << 20}
-	if set.opsMaxBytes() != 64<<20 || set.itemsMaxBytes() != 16<<20 {
-		t.Errorf("set budgets = %d/%d, want 64M/16M", set.opsMaxBytes(), set.itemsMaxBytes())
+	if set.opsMaxBytes() != 64<<20 || set.stateMaxBytes() != 16<<20 {
+		t.Errorf("set budgets = %d/%d, want 64M/16M", set.opsMaxBytes(), set.stateMaxBytes())
 	}
 }

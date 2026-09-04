@@ -6,24 +6,21 @@ import (
 	"strings"
 )
 
-// The default byte budgets (hits-hq decision 0005). Every resource HITS
-// creates declares one — some accounts (Synadia Cloud among them) require
-// it, and HITS declares them everywhere so there is one shape. The ops
-// stream refuses new writes at its cap rather than trimming history: a
-// budget bounds growth, never memory.
+// The default byte budgets (hits-hq decisions 0005 and 0012). Every
+// resource HITS creates declares one — some accounts (Synadia Cloud among
+// them) require it, and HITS declares them everywhere so there is one
+// shape. The ops stream refuses new writes at its cap rather than trimming
+// history: a budget bounds growth, never memory.
 const (
 	// DefaultMaxBytes is the ops stream's budget when Config leaves it 0.
 	DefaultMaxBytes = 1 << 30 // 1 GiB
-	// smallBucketMaxBytes bounds the projects and meta buckets — a closed
-	// vocabulary and a counter.
-	smallBucketMaxBytes = 8 << 20 // 8 MiB
 )
 
 // Config tunes the resources Start provisions. The zero value is the
 // decided default shape.
 type Config struct {
 	// MaxBytes is the ops stream's byte budget; 0 means DefaultMaxBytes.
-	// The hits-items bucket scales with it at a quarter of the budget.
+	// The hits-state bucket scales with it at a quarter of the budget.
 	MaxBytes int64
 }
 
@@ -34,7 +31,7 @@ func (c Config) opsMaxBytes() int64 {
 	return DefaultMaxBytes
 }
 
-func (c Config) itemsMaxBytes() int64 { return c.opsMaxBytes() / 4 }
+func (c Config) stateMaxBytes() int64 { return c.opsMaxBytes() / 4 }
 
 // ParseSize reads a human byte size: plain bytes, or a K/M/G/T suffix in
 // base 1024 ("512M", "2G"). The form the --max-bytes flags accept.

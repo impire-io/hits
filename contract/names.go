@@ -15,10 +15,8 @@ const (
 	ItemOpsSubjects = "hits.ops.item.>"
 	// ProjectOpsPrefix + slug is the subject a project's ops append to.
 	ProjectOpsPrefix = "hits.ops.project."
-	// ItemsBucket holds item snapshots — a fold of the log.
-	ItemsBucket = "hits-items"
-	// ProjectsBucket holds the located-in vocabulary — a fold of the log.
-	ProjectsBucket = "hits-projects"
-	// MetaBucket holds operational state not derived from the log.
-	MetaBucket = "hits-meta"
+	// StateBucket holds the state projection — item snapshots, the
+	// located-in vocabulary, and operational keys, all folds of the log,
+	// told apart by key prefix (decision 0012).
+	StateBucket = "hits-state"
 )
