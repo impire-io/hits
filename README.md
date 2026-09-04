@@ -89,6 +89,13 @@ client configuration:
 One server serves one agent under one actor; a host running several agents
 runs several servers.
 
+Agents that drive the CLI directly can learn it from the `hits-cli` skill,
+published in [`impire-marketplace`](https://github.com/impire-io/impire-marketplace)
+for any Agent-Skills-capable agent (`npx skills add impire-io/impire-marketplace`)
+and as a Claude Code plugin (`/plugin marketplace add impire-io/impire-marketplace`,
+then `/plugin install hits@impire`). The skill also covers installing the
+binary itself.
+
 **Optional: semantic search.** The semantic index needs an
 OpenAI-API-compatible embedding provider and is off unless configured:
 
