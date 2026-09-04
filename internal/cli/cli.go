@@ -51,6 +51,9 @@ Run the platform:
   up          run the service fleet in this process (flags follow the
               subcommand — see 'hits up -h')
 
+Contexts (connection configuration, $XDG_CONFIG_HOME/hits/context):
+  context     manage hits contexts: ls | add | import | edit | rm | select
+
 Authentication (hits contexts with an oauth block):
   auth        IDP device-flow login: login | status | logout  [--context <name>]
 
@@ -90,7 +93,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 	fs := flag.NewFlagSet("hits", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() { fmt.Fprint(errOut, usageText) }
-	ctxName := fs.String("context", "", "NATS context to connect with (default: the selected context)")
+	ctxName := fs.String("context", "", "hits context to connect with (default: the config's default context)")
 	actor := fs.String("actor", "", "acting handle for write commands (default: $HITS_ACTOR)")
 	jsonOut := fs.Bool("json", false, "print replies as indented JSON")
 	if err := fs.Parse(args); err != nil {
@@ -142,6 +145,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runSemantic(inv)
 	case "graph":
 		return runGraph(inv)
+	case "context":
+		return runContext(inv)
 	case "auth":
 		return runAuth(inv)
 	case "ping":

@@ -133,3 +133,13 @@ func writeNatsContext(t *testing.T, cfgHome, name string, body map[string]any) s
 func oauthBlock(idp *fakeIDP) map[string]any {
 	return map[string]any{"issuer": idp.srv.URL, "client_id": "hits-test"}
 }
+
+// nested builds a context body in the 0011 document shape: the connection
+// under "nats", hits blocks at the top level.
+func nested(url string, oauth map[string]any) map[string]any {
+	body := map[string]any{"nats": map[string]any{"url": url}}
+	if oauth != nil {
+		body["oauth"] = oauth
+	}
+	return body
+}
