@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -284,9 +285,10 @@ func TestDuplicateProjectRegistrationFails(t *testing.T) {
 	}
 }
 
-// TestReplayReproducesProjections is FR-31: delete the projection buckets,
-// restart the node (which replays the ops-log), and the projections match
-// what the live folds built.
+// TestReplayReproducesProjections is FR-31, whole-state since decision
+// 0012: delete the state bucket — snapshots, registry, and counter all go
+// with it — restart the node (which replays the ops-log), and everything
+// matches what the live folds built, with the next mint staying dense.
 func TestReplayReproducesProjections(t *testing.T) {
 	h := startStore(t)
 	ctx := testCtx(t)
@@ -313,16 +315,14 @@ func TestReplayReproducesProjections(t *testing.T) {
 		t.Fatalf("get before: %v", err)
 	}
 
-	// Delete the projections out from under the store, then restart the
-	// node: Start replays the ops-log into fresh buckets.
+	// Delete the state bucket out from under the store, then restart the
+	// node: Start replays the ops-log into a fresh bucket.
 	js, err := jetstream.New(h.svcConn)
 	if err != nil {
 		t.Fatalf("jetstream: %v", err)
 	}
-	for _, bucket := range []string{"hits-items", "hits-projects"} {
-		if err := js.DeleteKeyValue(ctx, bucket); err != nil {
-			t.Fatalf("delete bucket %s: %v", bucket, err)
-		}
+	if err := js.DeleteKeyValue(ctx, contract.StateBucket); err != nil {
+		t.Fatalf("delete bucket %s: %v", contract.StateBucket, err)
 	}
 	svc, err := node.Start(ctx, h.svcConn, node.Config{})
 	if err != nil {
@@ -345,5 +345,22 @@ func TestReplayReproducesProjections(t *testing.T) {
 	}
 	if len(ps) != 1 || ps[0].Slug != "hits" || ps[0].Name != "hits repo" {
 		t.Fatalf("replayed projects = %+v", ps)
+	}
+
+	// The counter went down with the bucket; replay derived it back from
+	// the log, so the next mint is the next dense ID, colliding with
+	// nothing (spec 010 FR-03).
+	n, err := strconv.ParseUint(it.ID, 10, 64)
+	if err != nil {
+		t.Fatalf("item ID %q is not decimal: %v", it.ID, err)
+	}
+	next, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Type: contract.Bug, Report: "the counter is derived too",
+	})
+	if err != nil {
+		t.Fatalf("create after replay: %v", err)
+	}
+	if want := strconv.FormatUint(n+1, 10); next.ID != want {
+		t.Fatalf("post-replay mint = %q, want %q — the replayed counter must resume dense", next.ID, want)
 	}
 }

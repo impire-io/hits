@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -13,23 +14,27 @@ import (
 	"github.com/impire-io/hits/contract"
 )
 
-// The ops-log and projection resource names live in contract, declared
-// once for every service (hits-hq/02-DESIGN/hits-up.md § boundaries).
+// The ops-log and bucket names live in contract, declared once for every
+// service (hits-hq/02-DESIGN/hits-up.md § boundaries). The key layout
+// inside the state bucket has one consumer — this store — so the prefixes
+// live here (decision 0012). They cannot collide: item IDs are decimal,
+// slugs are [a-z0-9-], and neither contains a dot.
 const (
-	counterKey       = "item-counter"
-	itemHistory      = 10 // KV revisions kept per item — "the last few states"
+	itemKeyPrefix    = "item."
+	projectKeyPrefix = "project."
+	systemKeyPrefix  = "system."
+	counterKey       = systemKeyPrefix + "item-counter"
+	stateHistory     = 10 // KV revisions kept per key — "the last few states"
 	maxWriteAttempts = 8
 )
 
-// store owns the ops-log stream and its projections. The stream is the
-// source of truth; hits-items and hits-projects are folds of it, disposable
-// and rebuilt by replay.
+// store owns the ops-log stream and its projection. The stream is the
+// source of truth; the state bucket is a fold of it — snapshots, registry,
+// and counter alike — disposable and rebuilt by replay.
 type store struct {
-	js       jetstream.JetStream
-	stream   jetstream.Stream
-	items    jetstream.KeyValue
-	projects jetstream.KeyValue
-	meta     jetstream.KeyValue
+	js     jetstream.JetStream
+	stream jetstream.Stream
+	state  jetstream.KeyValue
 }
 
 func openStore(ctx context.Context, nc *nats.Conn, cfg Config) (*store, error) {
@@ -53,38 +58,25 @@ func openStore(ctx context.Context, nc *nats.Conn, cfg Config) (*store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ensure stream %s: %w", contract.OpsStream, err)
 	}
-	s := &store{js: js, stream: stream}
-	for _, b := range []struct {
-		into    *jetstream.KeyValue
-		cfg     jetstream.KeyValueConfig
-		purpose string
-	}{
-		{&s.items, jetstream.KeyValueConfig{Bucket: contract.ItemsBucket, History: itemHistory,
-			MaxBytes:    cfg.itemsMaxBytes(),
-			Description: "item snapshots — a projection of the ops-log"}, "items"},
-		{&s.projects, jetstream.KeyValueConfig{Bucket: contract.ProjectsBucket,
-			MaxBytes:    smallBucketMaxBytes,
-			Description: "the located-in vocabulary — a projection of the ops-log"}, "projects"},
-		{&s.meta, jetstream.KeyValueConfig{Bucket: contract.MetaBucket,
-			MaxBytes:    smallBucketMaxBytes,
-			Description: "operational state that is not derived from the log (the item id counter)"}, "meta"},
-	} {
-		kv, err := js.CreateOrUpdateKeyValue(ctx, b.cfg)
-		if err != nil {
-			return nil, fmt.Errorf("ensure %s bucket: %w", b.purpose, err)
-		}
-		*b.into = kv
+	state, err := js.CreateOrUpdateKeyValue(ctx, jetstream.KeyValueConfig{
+		Bucket:      contract.StateBucket,
+		History:     stateHistory,
+		MaxBytes:    cfg.stateMaxBytes(),
+		Description: "the state projection — item snapshots, the project registry, and the item id counter, all folds of the ops-log",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ensure state bucket: %w", err)
 	}
-	return s, nil
+	return &store{js: js, stream: stream, state: state}, nil
 }
 
 // mintID allocates the next dense item ID via a CAS-update loop on the
 // counter key — the allocate-issue.sh trick without the git.
 func (s *store) mintID(ctx context.Context) (string, error) {
 	for {
-		entry, err := s.meta.Get(ctx, counterKey)
+		entry, err := s.state.Get(ctx, counterKey)
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			if _, cerr := s.meta.Create(ctx, counterKey, []byte("1")); cerr != nil {
+			if _, cerr := s.state.Create(ctx, counterKey, []byte("1")); cerr != nil {
 				if isCASConflict(cerr) {
 					continue // raced the first mint; re-read
 				}
@@ -100,7 +92,7 @@ func (s *store) mintID(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("corrupt item counter %q: %w", entry.Value(), err)
 		}
 		next := strconv.FormatUint(n+1, 10)
-		if _, err := s.meta.Update(ctx, counterKey, []byte(next), entry.Revision()); err != nil {
+		if _, err := s.state.Update(ctx, counterKey, []byte(next), entry.Revision()); err != nil {
 			if isCASConflict(err) {
 				continue // someone else minted; take the next one
 			}
@@ -126,11 +118,11 @@ func isCASConflict(err error) bool {
 }
 
 func (s *store) loadItem(ctx context.Context, id string) (*contract.Item, uint64, error) {
-	return loadSnapshot[contract.Item](ctx, s.items, id)
+	return loadSnapshot[contract.Item](ctx, s.state, itemKeyPrefix+id)
 }
 
 func (s *store) loadProject(ctx context.Context, slug string) (*contract.Project, uint64, error) {
-	return loadSnapshot[contract.Project](ctx, s.projects, slug)
+	return loadSnapshot[contract.Project](ctx, s.state, projectKeyPrefix+slug)
 }
 
 func loadSnapshot[T any](ctx context.Context, kv jetstream.KeyValue, key string) (*T, uint64, error) {
@@ -158,9 +150,9 @@ func (s *store) saveItem(ctx context.Context, it *contract.Item, rev uint64) (*c
 	}
 	for {
 		if rev == 0 {
-			_, err = s.items.Create(ctx, it.ID, data)
+			_, err = s.state.Create(ctx, itemKeyPrefix+it.ID, data)
 		} else {
-			_, err = s.items.Update(ctx, it.ID, data, rev)
+			_, err = s.state.Update(ctx, itemKeyPrefix+it.ID, data, rev)
 		}
 		if err == nil {
 			return it, nil
@@ -186,9 +178,9 @@ func (s *store) saveProject(ctx context.Context, p *contract.Project, rev uint64
 	}
 	for {
 		if rev == 0 {
-			_, err = s.projects.Create(ctx, p.Slug, data)
+			_, err = s.state.Create(ctx, projectKeyPrefix+p.Slug, data)
 		} else {
-			_, err = s.projects.Update(ctx, p.Slug, data, rev)
+			_, err = s.state.Update(ctx, projectKeyPrefix+p.Slug, data, rev)
 		}
 		if err == nil {
 			return p, nil
@@ -301,9 +293,11 @@ func (s *store) catchUp(ctx context.Context, id string) error {
 	return err
 }
 
-// replay folds the whole ops-log into the projections, skipping everything
-// already folded (snapshots carry the sequence of their last op). Deleting
-// the buckets and calling this reproduces them — the FR-31 guarantee.
+// replay folds the whole ops-log into the state bucket, skipping everything
+// already folded (snapshots carry the sequence of their last op), then
+// raises the item counter to the highest ID the log named. Deleting the
+// bucket and calling this reproduces all of it — snapshots, registry, and
+// counter — the FR-31 guarantee, whole-state since decision 0012.
 func (s *store) replay(ctx context.Context) error {
 	info, err := s.stream.Info(ctx)
 	if err != nil {
@@ -312,9 +306,61 @@ func (s *store) replay(ctx context.Context) error {
 	if info.State.LastSeq == 0 {
 		return nil
 	}
-	return s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
+	var maxID uint64
+	err = s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
+		if op.Op != contract.OpRegistered {
+			if n, perr := strconv.ParseUint(op.Entity, 10, 64); perr == nil && n > maxID {
+				maxID = n
+			}
+		}
 		return s.foldOne(ctx, op, seq)
 	})
+	if err != nil {
+		return err
+	}
+	return s.raiseCounter(ctx, maxID)
+}
+
+// raiseCounter lifts the item counter to at least n, never lowering it — a
+// concurrent mint that got further wins. This is the derivation that makes
+// the counter as disposable as the snapshots: every minted ID that reached
+// the log comes back through replay. The one accepted edge (decision 0012):
+// an ID minted for an op that never landed is reissued after a rebuild —
+// the log never named it, so nothing refers to it.
+func (s *store) raiseCounter(ctx context.Context, n uint64) error {
+	if n == 0 {
+		return nil
+	}
+	val := []byte(strconv.FormatUint(n, 10))
+	for {
+		entry, err := s.state.Get(ctx, counterKey)
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			if _, cerr := s.state.Create(ctx, counterKey, val); cerr != nil {
+				if isCASConflict(cerr) {
+					continue // raced a mint or another replay; re-read
+				}
+				return fmt.Errorf("init item counter at %d: %w", n, cerr)
+			}
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read item counter: %w", err)
+		}
+		cur, err := strconv.ParseUint(string(entry.Value()), 10, 64)
+		if err != nil {
+			return fmt.Errorf("corrupt item counter %q: %w", entry.Value(), err)
+		}
+		if cur >= n {
+			return nil
+		}
+		if _, err := s.state.Update(ctx, counterKey, val, entry.Revision()); err != nil {
+			if isCASConflict(err) {
+				continue // raced a mint; re-read and re-compare
+			}
+			return fmt.Errorf("raise item counter to %d: %w", n, err)
+		}
+		return nil
+	}
 }
 
 func (s *store) foldOne(ctx context.Context, op contract.Op, seq uint64) error {
@@ -426,15 +472,16 @@ func (s *store) registerProject(ctx context.Context, op contract.Op) (*contract.
 	return s.saveProject(ctx, next, 0)
 }
 
-// listProjects reads the registry projection.
+// listProjects reads the registry keys of the state bucket — filtered at
+// the server, so item and system keys never travel.
 func (s *store) listProjects(ctx context.Context) ([]contract.Project, error) {
-	lister, err := s.projects.ListKeys(ctx)
+	lister, err := s.state.ListKeysFiltered(ctx, projectKeyPrefix+">")
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	out := []contract.Project{}
 	for key := range lister.Keys() {
-		p, _, err := s.loadProject(ctx, key)
+		p, _, err := s.loadProject(ctx, strings.TrimPrefix(key, projectKeyPrefix))
 		if err != nil {
 			return nil, err
 		}

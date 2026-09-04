@@ -400,18 +400,13 @@ func TestStartOnMaxBytesRequiredAccount(t *testing.T) {
 	if ops.Discard != jetstream.DiscardNew {
 		t.Errorf("ops stream discard = %v, want DiscardNew — full must refuse, never trim", ops.Discard)
 	}
-	if got := streamConfig(t, js, "KV_"+contract.ItemsBucket).MaxBytes; got != node.DefaultMaxBytes/4 {
-		t.Errorf("items bucket budget = %d, want a quarter of the ops budget", got)
-	}
-	for _, bucket := range []string{contract.ProjectsBucket, contract.MetaBucket} {
-		if got := streamConfig(t, js, "KV_"+bucket).MaxBytes; got != 8<<20 {
-			t.Errorf("%s budget = %d, want 8 MiB", bucket, got)
-		}
+	if got := streamConfig(t, js, "KV_"+contract.StateBucket).MaxBytes; got != node.DefaultMaxBytes/4 {
+		t.Errorf("state bucket budget = %d, want a quarter of the ops budget", got)
 	}
 }
 
 // TestMaxBytesOverride proves the one knob reaches the stream and scales
-// the items bucket with it.
+// the state bucket with it.
 func TestMaxBytesOverride(t *testing.T) {
 	url := natstest.StartJetStreamMaxBytesRequired(t)
 	ctx := testCtx(t)
@@ -430,7 +425,7 @@ func TestMaxBytesOverride(t *testing.T) {
 	if got := streamConfig(t, js, contract.OpsStream).MaxBytes; got != 64<<20 {
 		t.Errorf("ops stream budget = %d, want the 64 MiB override", got)
 	}
-	if got := streamConfig(t, js, "KV_"+contract.ItemsBucket).MaxBytes; got != 16<<20 {
-		t.Errorf("items bucket budget = %d, want 16 MiB (a quarter of the override)", got)
+	if got := streamConfig(t, js, "KV_"+contract.StateBucket).MaxBytes; got != 16<<20 {
+		t.Errorf("state bucket budget = %d, want 16 MiB (a quarter of the override)", got)
 	}
 }
