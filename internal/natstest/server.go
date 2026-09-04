@@ -21,6 +21,19 @@ func Start(t *testing.T) (url string) {
 	})
 }
 
+// StartWithToken runs an in-process NATS server that authorizes clients by
+// the given token — the shape an auth-callout deployment presents to the
+// oauth connect path (specs/008-idp-auth). The server is shut down when
+// the test ends.
+func StartWithToken(t *testing.T, token string) (url string) {
+	t.Helper()
+	return start(t, &server.Options{
+		Host:          "127.0.0.1",
+		Port:          -1, // pick a random free port
+		Authorization: token,
+	})
+}
+
 // StartJetStream runs an in-process NATS server with JetStream enabled,
 // storing state in a per-test temp dir. The server is shut down when the
 // test ends.

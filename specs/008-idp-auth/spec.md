@@ -7,7 +7,8 @@ settled by decisions
 [`0008`](../../../hits-hq/03-DECISIONS/0008-client-idp-auth.md),
 [`0009`](../../../hits-hq/03-DECISIONS/0009-connection-profiles.md),
 [`0010`](../../../hits-hq/03-DECISIONS/0010-hits-contexts.md).
-**Status:** specified — build not started.
+**Status:** implemented on this branch ([plan.md](plan.md)) — awaiting
+review and merge.
 
 ## What this delivers
 

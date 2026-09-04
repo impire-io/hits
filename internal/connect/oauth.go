@@ -29,7 +29,7 @@ func discover(ctx context.Context, issuer string) (oauthEndpoints, error) {
 	if err != nil {
 		return eps, fmt.Errorf("discovery: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return eps, fmt.Errorf("discovery: %s returned %s", url, resp.Status)
 	}

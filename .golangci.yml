@@ -35,6 +35,8 @@ linters:
               desc: services never import the adapters
             - pkg: github.com/impire-io/hits/internal/fleet
               desc: services never import the composition root
+            - pkg: github.com/impire-io/hits/internal/connect
+              desc: services never import the bootstrap; their mains do the connecting
         index-services-stand-alone:
           files: ["**/internal/index/**", "!$test"]
           deny:
@@ -46,6 +48,8 @@ linters:
               desc: services never import the adapters
             - pkg: github.com/impire-io/hits/internal/fleet
               desc: services never import the composition root
+            - pkg: github.com/impire-io/hits/internal/connect
+              desc: services never import the bootstrap; their mains do the connecting
         adapters-speak-client-only:
           files: ["**/internal/cli/**", "**/internal/mcp/**", "!$test"]
           deny:
@@ -55,6 +59,25 @@ linters:
               desc: adapters reach the fleet through the client package, never a service's internals
             - pkg: github.com/impire-io/hits/internal/fleet
               desc: adapters stay clients; the composition root is dispatched from cmd/hits
+        # The shared bootstrap (specs/008-idp-auth): internal/connect is the
+        # one seam every binary connects through — importable from the
+        # adapters, the composition root, and cmd/ mains; it imports no hits
+        # tree back.
+        connect-is-shared-bootstrap:
+          files: ["**/internal/connect/**", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/client
+              desc: the bootstrap opens connections; speaking over them is a client's job
+            - pkg: github.com/impire-io/hits/internal/node
+              desc: the bootstrap imports no service internals
+            - pkg: github.com/impire-io/hits/internal/index
+              desc: the bootstrap imports no service internals
+            - pkg: github.com/impire-io/hits/internal/cli
+              desc: the bootstrap never imports the adapters
+            - pkg: github.com/impire-io/hits/internal/mcp
+              desc: the bootstrap never imports the adapters
+            - pkg: github.com/impire-io/hits/internal/fleet
+              desc: the bootstrap never imports the composition root
         # The composition root (specs/007-hits-up): internal/fleet calls the
         # services' Start entrypoints and nothing else reaches it back.
         fleet-composes-the-services:

@@ -100,6 +100,50 @@ hits up --context hits --embedding-url https://api.openai.com/v1 --embedding-mod
 Everything else works without it; `hits semantic <text>` joins the query
 surface when it is on.
 
+**Optional: SSO through your IDP.** Deployments fronting NATS with an
+[auth callout](https://docs.nats.io/running-a-nats-service/configuration/securing_nats/auth_callout)
+that accepts OAuth access tokens can log in through their IDP instead of
+handing out creds files. Auth rides a **hits context**: the same JSON
+schema as a nats context, in a directory hits owns
+(`~/.config/hits/context/`), plus one extra field — the `oauth` block:
+
+```json
+{
+  "url": "tls://nats.example.com:4222",
+  "oauth": {
+    "issuer": "https://idp.example.com",
+    "client_id": "hits-cli"
+  }
+}
+```
+
+```sh
+hits auth login --context example   # device flow: open the URL, enter the code
+hits --context example search login # everything else just works
+```
+
+`hits auth login` is the one interactive moment: it runs the RFC 8628
+device flow (works over SSH, no browser needed on the machine) and caches
+the tokens under `~/.local/state/hits/tokens/`. Every connect and
+reconnect — CLI, `hits up`, `hits-mcp` — presents the current access
+token, refreshing it through the refresh token as needed; long-lived
+processes heal across token expiry without restarts. `hits auth status`
+and `hits auth logout` complete the family. Validating the token is your
+deployment's job: HITS performs the exchange, your auth callout decides
+what the token means. Everything a nats context can carry — creds files,
+static tokens, TLS — works in a hits context too, loaded by the same
+library; contexts from the nats CLI keep working untouched, and a name
+must live in only one of the two directories.
+
+**Optional: client defaults.** `~/.config/hits/config.json` holds
+per-user defaults, so neither flag nor env var is required every time:
+
+```json
+{ "defaults": { "context": "example", "actor": "daan" } }
+```
+
+Precedence stays flag, then environment, then the default.
+
 ## Layout
 
 | Path | What it is |
