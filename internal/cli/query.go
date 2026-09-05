@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
@@ -15,6 +17,8 @@ func runSearch(inv *invocation) error {
 	status := fs.String("status", "", "filter by status")
 	limit := fs.Int("limit", 0, "page size (service default 10, capped at 100)")
 	offset := fs.Int("offset", 0, "page start")
+	var columns multiFlag
+	fs.Var(&columns, "columns", "table columns, comma-separated (repeatable); default: every populated field")
 
 	var query string
 	args := inv.args
@@ -25,6 +29,10 @@ func runSearch(inv *invocation) error {
 		return err
 	}
 	if err := noTrailing(fs); err != nil {
+		return err
+	}
+	cols, err := parseColumns(columns)
+	if err != nil {
 		return err
 	}
 
@@ -43,7 +51,44 @@ func runSearch(inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	return inv.printSearch(reply)
+	rows, err := fetchRows(inv.ctx, c, reply.Hits)
+	if err != nil {
+		return err
+	}
+	return inv.printSearchTable(rows, reply.Total, cols)
+}
+
+// fetchRows resolves each hit to its item snapshot — the index is never
+// authority; state comes from the hits service. At most eight gets are in
+// flight at once, and hit order is preserved. A hit whose item is gone (a
+// tombstone race) keeps its id and score with no snapshot; any other failure
+// fails the whole command rather than presenting a silently partial table.
+func fetchRows(ctx context.Context, c *client.Client, hits []client.SearchHit) ([]searchRow, error) {
+	rows := make([]searchRow, len(hits))
+	errs := make([]error, len(hits))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, h := range hits {
+		rows[i] = searchRow{ID: h.ID, Score: h.Score}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			it, err := c.GetItem(ctx, h.ID)
+			var apiErr *client.APIError
+			switch {
+			case err == nil:
+				rows[i].Item = &it
+			case errors.As(err, &apiErr) && apiErr.Code == "not-found":
+				// gone between the search and the get: id and score stand
+			default:
+				errs[i] = fmt.Errorf("get %s: %w", h.ID, err)
+			}
+		}()
+	}
+	wg.Wait()
+	return rows, errors.Join(errs...)
 }
 
 func runSemantic(inv *invocation) error {
