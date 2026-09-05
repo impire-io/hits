@@ -234,6 +234,9 @@ func TestLinkEditTombstone(t *testing.T) {
 }
 
 func TestWriteNeedsActor(t *testing.T) {
+	// An empty config home keeps the machine's real defaults.actor from
+	// satisfying the actor check.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HITS_ACTOR", "")
 	err := runErr(t, guardConnector(t), "create", "--type", "bug", "some report")
 	if !strings.Contains(err.Error(), "actor") {

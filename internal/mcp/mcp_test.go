@@ -426,6 +426,9 @@ func TestQueryTools(t *testing.T) {
 func TestRunFailsFast(t *testing.T) {
 	var errOut strings.Builder
 
+	// An empty config home keeps the machine's real defaults.actor from
+	// satisfying the actor check.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HITS_ACTOR", "")
 	err := mcp.Run(testCtx(t), nil, &errOut, guardConnector(t))
 	if err == nil || !strings.Contains(err.Error(), "actor") {
