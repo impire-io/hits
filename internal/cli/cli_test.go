@@ -297,7 +297,7 @@ func TestSearchCommand(t *testing.T) {
 	t.Setenv("HITS_ACTOR", "daan")
 
 	match := itemID(t, run(t, connect, "create", "--type", "bug", "the parser crashes on unicode"))
-	other := itemID(t, run(t, connect, "create", "--type", "bug", "docs typo in the readme"))
+	run(t, connect, "create", "--type", "bug", "docs typo in the readme")
 
 	svc, err := search.Start(testCtx(t), h.svcConn)
 	if err != nil {
@@ -307,8 +307,85 @@ func TestSearchCommand(t *testing.T) {
 
 	out := run(t, connect, "search", "parser")
 	wantContains(t, out, match, "total: 1")
-	if strings.Contains(out, other) {
-		t.Errorf("search %q should not hit %s:\n%s", "parser", other, out)
+	if strings.Contains(out, "docs typo") {
+		t.Errorf("search %q should not hit the other item:\n%s", "parser", out)
+	}
+
+	// the hit renders as a table row: populated columns show, carrying the
+	// snapshot's fields; a column empty in every row is dropped.
+	wantContains(t, out, "id", "score", "status", "report", "the parser crashes on unicode")
+	if strings.Contains(out, "closed") {
+		t.Errorf("empty-everywhere column should be dropped:\n%s", out)
+	}
+}
+
+func TestSearchColumns(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	id := itemID(t, run(t, connect, "create", "--type", "bug", "column selection fodder"))
+	run(t, connect, "claim", id)
+
+	svc, err := search.Start(testCtx(t), h.svcConn)
+	if err != nil {
+		t.Fatalf("start search: %v", err)
+	}
+	t.Cleanup(svc.Stop)
+
+	// --columns names the columns exactly, in the given order — repeatable
+	// and comma-separated, and a column empty in every row still shows when
+	// asked for.
+	out := run(t, connect, "search", "fodder", "--columns", "id,claimed-by", "--columns", "closed")
+	wantContains(t, out, "claimed-by", "closed", "daan")
+	if strings.Contains(out, "report") {
+		t.Errorf("--columns should render only the named columns:\n%s", out)
+	}
+	header := strings.SplitN(out, "\n", 2)[0]
+	if strings.Index(header, "id") >= strings.Index(header, "claimed-by") ||
+		strings.Index(header, "claimed-by") >= strings.Index(header, "closed") {
+		t.Errorf("columns out of order: %q", header)
+	}
+}
+
+func TestSearchUnknownColumn(t *testing.T) {
+	err := runErr(t, guardConnector(t), "search", "--columns", "nope")
+	if !strings.Contains(err.Error(), `unknown column "nope"`) {
+		t.Errorf("want an unknown-column error, got %v", err)
+	}
+}
+
+func TestSearchJSON(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	id := itemID(t, run(t, connect, "create", "--type", "bug", "enriched json fodder"))
+
+	svc, err := search.Start(testCtx(t), h.svcConn)
+	if err != nil {
+		t.Fatalf("start search: %v", err)
+	}
+	t.Cleanup(svc.Stop)
+
+	out := run(t, connect, "--json", "search", "enriched")
+	var reply struct {
+		Hits []struct {
+			ID    string         `json:"id"`
+			Score float64        `json:"score"`
+			Item  *contract.Item `json:"item"`
+		} `json:"hits"`
+		Total uint64 `json:"total"`
+	}
+	if err := json.Unmarshal([]byte(out), &reply); err != nil {
+		t.Fatalf("--json search output is not JSON: %v\n%s", err, out)
+	}
+	if reply.Total != 1 || len(reply.Hits) != 1 {
+		t.Fatalf("want exactly one hit, got:\n%s", out)
+	}
+	hit := reply.Hits[0]
+	if hit.ID != id || hit.Item == nil || hit.Item.Report != "enriched json fodder" {
+		t.Errorf("hit = %+v, want item %s carrying its snapshot", hit, id)
 	}
 }
 
