@@ -24,6 +24,22 @@ var (
 	slugRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 )
 
+// Byte budgets on free-text payload fields (decision 0014): bodies — report
+// and note text — carry prose; every other free-text field is a label. Over
+// budget is refused whole, never trimmed, so the log holds exactly what was
+// written or nothing. The numbers are starting points, raised by decision.
+const (
+	MaxBodyBytes  = 8 * 1024
+	MaxLabelBytes = 1024
+)
+
+func overBudget(field, s string, budget int) error {
+	if len(s) > budget {
+		return inv("over-budget", "%s is %d bytes; the budget is %d", field, len(s), budget)
+	}
+	return nil
+}
+
 // ValidActor reports whether s is a well-formed actor handle.
 func ValidActor(s string) bool { return actorRe.MatchString(s) }
 
@@ -86,7 +102,7 @@ func CheckOp(current *Item, op Op) error {
 		if p.Text == "" {
 			return inv("empty-note", "a note needs text")
 		}
-		return nil
+		return overBudget("note text", p.Text, MaxBodyBytes)
 	case OpEdited:
 		return checkEdited(current, op)
 	case OpTransitioned:
@@ -115,7 +131,7 @@ func CheckOp(current *Item, op Op) error {
 		if p.Reason == "" {
 			return inv("empty-reason", "a tombstone needs its reason")
 		}
-		return nil
+		return overBudget("tombstone reason", p.Reason, MaxLabelBytes)
 	default:
 		return inv("invalid-op", "unknown item op %q", op.Op)
 	}
@@ -143,7 +159,10 @@ func checkCreated(op Op) error {
 			return inv("invalid-slug", "located-in entry %q is not a well-formed project slug", loc)
 		}
 	}
-	return nil
+	if err := overBudget("report", p.Report, MaxBodyBytes); err != nil {
+		return err
+	}
+	return overBudget("discovered-while", p.DiscoveredWhile, MaxLabelBytes)
 }
 
 func checkEdited(current *Item, op Op) error {
@@ -161,6 +180,26 @@ func checkEdited(current *Item, op Op) error {
 		for _, loc := range *p.LocatedIn {
 			if !ValidSlug(loc) {
 				return inv("invalid-slug", "located-in entry %q is not a well-formed project slug", loc)
+			}
+		}
+	}
+	if p.DiscoveredWhile != nil {
+		if err := overBudget("discovered-while", *p.DiscoveredWhile, MaxLabelBytes); err != nil {
+			return err
+		}
+	}
+	if p.Lands != nil {
+		for _, l := range *p.Lands {
+			if err := overBudget("lands repo", l.Repo, MaxLabelBytes); err != nil {
+				return err
+			}
+			if err := overBudget("lands pr", l.PR, MaxLabelBytes); err != nil {
+				return err
+			}
+			for _, a := range l.After {
+				if err := overBudget("lands after entry", a, MaxLabelBytes); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -198,6 +237,21 @@ func checkTransitioned(current *Item, op Op) error {
 			return inv("invalid-slug", "located-in entry %q is not a well-formed project slug", loc)
 		}
 	}
+	for _, ref := range p.FixedBy {
+		for _, f := range []struct{ field, s string }{
+			{"fixed-by pr", ref.PR}, {"fixed-by commit", ref.Commit},
+			{"fixed-by action", ref.Action}, {"fixed-by note", ref.Note},
+		} {
+			if err := overBudget(f.field, f.s, MaxLabelBytes); err != nil {
+				return err
+			}
+		}
+	}
+	for _, d := range p.AmendedDesign {
+		if err := overBudget("amended-design entry", d, MaxLabelBytes); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -229,7 +283,7 @@ func checkBlocked(current *Item, op Op) error {
 	if p.Interrupted != current.Status {
 		return inv("interrupted-mismatch", "blocked op records %q as interrupted, item is %q", p.Interrupted, current.Status)
 	}
-	return nil
+	return overBudget("blocked-by", p.BlockedBy, MaxLabelBytes)
 }
 
 func checkLink(current *Item, op Op) error {
@@ -281,7 +335,10 @@ func CheckProjectOp(current *Project, op Op) error {
 	if p.Name == "" {
 		return inv("empty-name", "a project registers with a display name")
 	}
-	return nil
+	if err := overBudget("project name", p.Name, MaxLabelBytes); err != nil {
+		return err
+	}
+	return overBudget("project description", p.Description, MaxLabelBytes)
 }
 
 func decode(op Op, into any) error {
