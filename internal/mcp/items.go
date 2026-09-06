@@ -74,6 +74,11 @@ type registerProjectIn struct {
 	Description string `json:"description,omitempty" jsonschema:"what the project is"`
 }
 
+type retireProjectIn struct {
+	Slug   string `json:"slug" jsonschema:"the project's slug"`
+	Reason string `json:"reason" jsonschema:"why the slug leaves the vocabulary"`
+}
+
 type emptyIn struct{}
 
 func addItemTools(s *sdk.Server, c *client.Client, actor string) {
@@ -162,6 +167,14 @@ func addItemTools(s *sdk.Server, c *client.Client, actor string) {
 		func(ctx context.Context, _ *sdk.CallToolRequest, in registerProjectIn) (*sdk.CallToolResult, contract.Project, error) {
 			p, err := c.RegisterProject(ctx, client.RegisterProjectRequest{
 				Actor: actor, Slug: in.Slug, Name: in.Name, Description: in.Description,
+			})
+			return nil, p, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "retire_project", Description: "Retire a project: the slug leaves the located-in vocabulary and is never reused; history stands."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in retireProjectIn) (*sdk.CallToolResult, contract.Project, error) {
+			p, err := c.RetireProject(ctx, client.RetireProjectRequest{
+				Actor: actor, Slug: in.Slug, Reason: in.Reason,
 			})
 			return nil, p, err
 		})

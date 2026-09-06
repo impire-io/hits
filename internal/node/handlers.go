@@ -292,6 +292,29 @@ func (h *handlers) registerProject(req micro.Request) {
 	h.respond(req, p)
 }
 
+func (h *handlers) retireProject(req micro.Request) {
+	var r client.RetireProjectRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpRetired, r.Slug, r.Actor, contract.RetiredPayload{
+		Reason: r.Reason,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	p, err := h.st.retireProject(ctx, op)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, p)
+}
+
 func (h *handlers) listProjects(req micro.Request) {
 	ctx, cancel := opCtx()
 	defer cancel()

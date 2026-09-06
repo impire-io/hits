@@ -319,26 +319,46 @@ func CheckProjectOp(current *Project, op Op) error {
 	if !ValidActor(op.Actor) {
 		return inv("invalid-actor", "actor %q is not a well-formed handle", op.Actor)
 	}
-	if op.Op != OpRegistered {
-		return inv("invalid-op", "unknown project op %q", op.Op)
-	}
 	if !ValidSlug(op.Entity) {
 		return inv("invalid-slug", "%q is not a well-formed project slug", op.Entity)
 	}
-	if current != nil {
-		return inv("already-registered", "project %s is already registered", current.Slug)
+	switch op.Op {
+	case OpRegistered:
+		if current != nil {
+			if current.Retired {
+				return inv("slug-retired", "project %s is retired; a retired slug is never reused", current.Slug)
+			}
+			return inv("already-registered", "project %s is already registered", current.Slug)
+		}
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Name == "" {
+			return inv("empty-name", "a project registers with a display name")
+		}
+		if err := overBudget("project name", p.Name, MaxLabelBytes); err != nil {
+			return err
+		}
+		return overBudget("project description", p.Description, MaxLabelBytes)
+	case OpRetired:
+		if current == nil {
+			return inv("unregistered-project", "project %s is not registered", op.Entity)
+		}
+		if current.Retired {
+			return inv("already-retired", "project %s is already retired", current.Slug)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Reason == "" {
+			return inv("empty-reason", "a retirement needs its reason")
+		}
+		return overBudget("retire reason", p.Reason, MaxLabelBytes)
+	default:
+		return inv("invalid-op", "unknown project op %q", op.Op)
 	}
-	var p RegisteredPayload
-	if err := decode(op, &p); err != nil {
-		return err
-	}
-	if p.Name == "" {
-		return inv("empty-name", "a project registers with a display name")
-	}
-	if err := overBudget("project name", p.Name, MaxLabelBytes); err != nil {
-		return err
-	}
-	return overBudget("project description", p.Description, MaxLabelBytes)
 }
 
 func decode(op Op, into any) error {

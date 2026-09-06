@@ -42,7 +42,7 @@ Item commands (the actor comes from --actor or $HITS_ACTOR):
   tombstone   void a filing mistake:  tombstone <id> <reason>
 
 Vocabulary and queries:
-  project     the located-in vocabulary: register <slug> <name> | list
+  project     the located-in vocabulary: register <slug> <name> | retire <slug> --reason <r> | list
   search      full-text over reports and notes: search [<query>] [flags]
   semantic    nearest items to a text: semantic <text> [--limit <n>]
   graph       edges at a node: neighbors <id> | walk <id>  [flags]

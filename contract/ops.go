@@ -11,8 +11,8 @@ import (
 // OpType names what happened. Ops are semantic — never "state is now X".
 type OpType string
 
-// The op catalog. All but OpRegistered apply to items; OpRegistered applies
-// to projects.
+// The op catalog. All but OpRegistered and OpRetired apply to items;
+// OpRegistered and OpRetired apply to projects.
 const (
 	OpCreated      OpType = "created"
 	OpNoted        OpType = "noted"
@@ -26,6 +26,7 @@ const (
 	OpUnlinked     OpType = "unlinked"
 	OpTombstoned   OpType = "tombstoned"
 	OpRegistered   OpType = "registered"
+	OpRetired      OpType = "retired"
 )
 
 // EnvelopeVersion is the current op envelope schema version.
@@ -130,4 +131,10 @@ type TombstonedPayload struct {
 type RegisteredPayload struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+}
+
+// RetiredPayload retires a project: the slug leaves the located-in
+// vocabulary, history stands, and the slug is never reused.
+type RetiredPayload struct {
+	Reason string `json:"reason"`
 }
