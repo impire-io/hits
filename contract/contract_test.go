@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/impire-io/hits/contract"
@@ -104,6 +105,57 @@ func TestLifecycle(t *testing.T) {
 	}
 	if err := contract.CheckOp(it, mkOp(t, contract.OpLinked, "1", "daan", contract.LinkedPayload{Type: contract.RelatesTo, To: "9"})); err != nil {
 		t.Errorf("link on closed item: %v", err)
+	}
+}
+
+// TestTextBudgets: every free-text payload field fits its class budget
+// (decision 0014) — bodies 8 KiB, labels 1 KiB — an exactly-at-budget body
+// passes, and one byte over is refused with over-budget.
+func TestTextBudgets(t *testing.T) {
+	body := strings.Repeat("x", contract.MaxBodyBytes+1)
+	label := strings.Repeat("x", contract.MaxLabelBytes+1)
+	it := newBug(t)
+
+	cases := []struct {
+		name    string
+		op      contract.OpType
+		payload any
+	}{
+		{"report", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: body}},
+		{"discovered-while", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: "x", DiscoveredWhile: label}},
+		{"note text", contract.OpNoted, contract.NotedPayload{Text: body}},
+		{"edited discovered-while", contract.OpEdited, contract.EditedPayload{DiscoveredWhile: &label}},
+		{"lands pr", contract.OpEdited, contract.EditedPayload{Lands: &[]contract.Land{{Repo: "hits", PR: label, After: []string{}}}}},
+		{"blocked-by", contract.OpBlocked, contract.BlockedPayload{BlockedBy: label, Interrupted: contract.Open}},
+		{"fixed-by note", contract.OpTransitioned, contract.TransitionedPayload{
+			To: contract.Resolved, Closed: "2026-09-06", FixedBy: []contract.FixRef{{Action: "x", Note: label}},
+		}},
+		{"amended-design entry", contract.OpTransitioned, contract.TransitionedPayload{
+			To: contract.Resolved, Closed: "2026-09-06", AmendedDesign: []string{label},
+		}},
+		{"tombstone reason", contract.OpTombstoned, contract.TombstonedPayload{Reason: label}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			current := it
+			if tc.op == contract.OpCreated {
+				current = nil
+			}
+			entity := "1"
+			if current == nil {
+				entity = "9"
+			}
+			wantInvariant(t, contract.CheckOp(current, mkOp(t, tc.op, entity, "daan", tc.payload)), "over-budget")
+		})
+	}
+
+	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
+		contract.RegisteredPayload{Name: "HITS", Description: label})), "over-budget")
+
+	// Exactly at budget is inside it.
+	atBudget := strings.Repeat("x", contract.MaxBodyBytes)
+	if err := contract.CheckOp(it, mkOp(t, contract.OpNoted, "1", "daan", contract.NotedPayload{Text: atBudget})); err != nil {
+		t.Errorf("note at exactly the body budget: %v", err)
 	}
 }
 
