@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -40,7 +39,7 @@ func (s *Service) Stop() {
 
 // Start builds the embedding collection by replaying the ops-log and
 // registers the hits-semantic micro service only once caught up with the
-// backlog measured at start. An item whose embedding call fails is skipped
+// backlog measured at start. A chunk whose embedding call fails is skipped
 // with a log line — degraded, not down (spec 004 FR-04).
 func Start(ctx context.Context, nc *nats.Conn, cfg Config) (*Service, error) {
 	js, err := jetstream.New(nc)
@@ -140,8 +139,10 @@ func Start(ctx context.Context, nc *nats.Conn, cfg Config) (*Service, error) {
 	return &Service{micro: svc, cons: cc, foldCancel: foldCancel}, nil
 }
 
-// fold applies one op; only text-changing ops re-embed, and a tombstone
-// removes the document.
+// fold applies one op; only text-adding ops embed — a creation embeds the
+// report, a note embeds just itself — and a tombstone removes every chunk.
+// Chunk names derive from the op's stream sequence, so a replay reproduces
+// the same documents.
 func fold(ctx context.Context, idx indexer, items map[string]*contract.Item, op contract.Op, seq uint64) {
 	next, err := contract.Apply(items[op.Entity], op, seq)
 	if err != nil {
@@ -154,23 +155,18 @@ func fold(ctx context.Context, idx indexer, items map[string]*contract.Item, op 
 		if err := idx.remove(ctx, next.ID); err != nil {
 			log.Printf("hits-semantic: %v", err)
 		}
-	case op.Op == contract.OpCreated || op.Op == contract.OpNoted:
-		if err := idx.upsert(ctx, next.ID, textOf(next)); err != nil {
-			// Degraded, not down: the item is simply not findable
-			// semantically until a later re-embed succeeds.
+	case op.Op == contract.OpCreated:
+		if err := idx.upsert(ctx, next.ID, "report", next.Report); err != nil {
+			// Degraded, not down: the chunk is simply not findable
+			// semantically; the item's other chunks still are.
+			log.Printf("hits-semantic: %v", err)
+		}
+	case op.Op == contract.OpNoted:
+		note := next.Notes[len(next.Notes)-1]
+		if err := idx.upsert(ctx, next.ID, fmt.Sprintf("note-%d", seq), note.Text); err != nil {
 			log.Printf("hits-semantic: %v", err)
 		}
 	}
-}
-
-// textOf is the embedded document: the report plus the trail.
-func textOf(it *contract.Item) string {
-	parts := make([]string, 0, 1+len(it.Notes))
-	parts = append(parts, it.Report)
-	for _, n := range it.Notes {
-		parts = append(parts, n.Text)
-	}
-	return strings.Join(parts, "\n")
 }
 
 func queryHandler(idx indexer) func(micro.Request) {
