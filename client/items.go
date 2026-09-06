@@ -26,6 +26,7 @@ const (
 	NoteSubject            = "hits.api.note"
 	TombstoneSubject       = "hits.api.tombstone"
 	RegisterProjectSubject = "hits.api.project.register"
+	RetireProjectSubject   = "hits.api.project.retire"
 	ListProjectsSubject    = "hits.api.project.list"
 )
 
@@ -135,6 +136,15 @@ type RegisterProjectRequest struct {
 	Description string `json:"description,omitempty"`
 }
 
+// RetireProjectRequest removes one entry from the located-in vocabulary:
+// listings drop the slug, new references are refused, history stands, and
+// the slug is never reused.
+type RetireProjectRequest struct {
+	Actor  string `json:"actor"`
+	Slug   string `json:"slug"`
+	Reason string `json:"reason"`
+}
+
 // CreateItem opens an item and returns its first snapshot.
 func (c *Client) CreateItem(ctx context.Context, r CreateItemRequest) (contract.Item, error) {
 	return request[contract.Item](ctx, c, CreateSubject, r)
@@ -198,6 +208,12 @@ func (c *Client) TombstoneItem(ctx context.Context, r TombstoneItemRequest) (con
 // RegisterProject adds a project to the located-in vocabulary.
 func (c *Client) RegisterProject(ctx context.Context, r RegisterProjectRequest) (contract.Project, error) {
 	return request[contract.Project](ctx, c, RegisterProjectSubject, r)
+}
+
+// RetireProject retires a project: the slug leaves the located-in
+// vocabulary and is never reused; history stands.
+func (c *Client) RetireProject(ctx context.Context, r RetireProjectRequest) (contract.Project, error) {
+	return request[contract.Project](ctx, c, RetireProjectSubject, r)
 }
 
 // ListProjects reads the whole located-in vocabulary.

@@ -151,6 +151,8 @@ func TestTextBudgets(t *testing.T) {
 
 	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
 		contract.RegisteredPayload{Name: "HITS", Description: label})), "over-budget")
+	wantInvariant(t, contract.CheckProjectOp(&contract.Project{Slug: "hits", Name: "HITS", Seq: 1},
+		mkOp(t, contract.OpRetired, "hits", "daan", contract.RetiredPayload{Reason: label})), "over-budget")
 
 	// Exactly at budget is inside it.
 	atBudget := strings.Repeat("x", contract.MaxBodyBytes)
@@ -283,4 +285,50 @@ func TestProjects(t *testing.T) {
 		contract.RegisteredPayload{Name: "x"})), "invalid-slug")
 	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
 		contract.RegisteredPayload{})), "empty-name")
+}
+
+func TestProjectRetirement(t *testing.T) {
+	reg := mkOp(t, contract.OpRegistered, "hits", "daan", contract.RegisteredPayload{Name: "HITS product repo"})
+	p, err := contract.ApplyProject(nil, reg, 1)
+	if err != nil {
+		t.Fatalf("apply register: %v", err)
+	}
+	ret := mkOp(t, contract.OpRetired, "hits", "daan", contract.RetiredPayload{Reason: "superseded"})
+
+	// Retiring needs a registration; a retirement folds onto it.
+	wantInvariant(t, contract.CheckProjectOp(nil, ret), "unregistered-project")
+	if err := contract.CheckProjectOp(p, ret); err != nil {
+		t.Fatalf("check retire: %v", err)
+	}
+	rp, err := contract.ApplyProject(p, ret, 2)
+	if err != nil {
+		t.Fatalf("apply retire: %v", err)
+	}
+	if !rp.Retired || rp.RetireReason != "superseded" || rp.Seq != 2 {
+		t.Fatalf("retired project = %+v", rp)
+	}
+	if rp.Name != "HITS product repo" {
+		t.Fatalf("retirement dropped the name: %+v", rp)
+	}
+	if p.Retired {
+		t.Fatal("ApplyProject mutated the input snapshot")
+	}
+
+	// Terminal both ways: no double retire, no re-registration ever.
+	wantInvariant(t, contract.CheckProjectOp(rp, ret), "already-retired")
+	wantInvariant(t, contract.CheckProjectOp(rp, reg), "slug-retired")
+
+	// A retirement carries its reason.
+	wantInvariant(t, contract.CheckProjectOp(p, mkOp(t, contract.OpRetired, "hits", "daan",
+		contract.RetiredPayload{})), "empty-reason")
+
+	// Replay idempotence: an op at or below the snapshot's seq is skipped.
+	if again, err := contract.ApplyProject(rp, ret, 2); err != nil || again != rp {
+		t.Fatalf("replayed retire = %+v, %v; want the snapshot unchanged", again, err)
+	}
+
+	// A retirement with no registration before it is log corruption.
+	if _, err := contract.ApplyProject(nil, ret, 1); err == nil {
+		t.Fatal("apply retire without registration should error")
+	}
 }

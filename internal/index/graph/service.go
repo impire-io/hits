@@ -143,6 +143,11 @@ func fold(st store, items map[string]*contract.Item, op contract.Op, seq uint64)
 		st.setName(nodeKey{kind: client.NodeProject, id: op.Entity}, p.Name)
 		return
 	}
+	if op.Op == contract.OpRetired {
+		// A retired project's node materializes only through item edges, so
+		// there is nothing to remove; the name mapping stays for history.
+		return
+	}
 	next, err := contract.Apply(items[op.Entity], op, seq)
 	if err != nil {
 		log.Printf("hits-graph: fold %s op on item %s: %v", op.Op, op.Entity, err)

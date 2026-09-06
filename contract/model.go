@@ -139,11 +139,16 @@ func (it *Item) clone() *Item {
 	return &c
 }
 
-// Project is one entry of the located-in vocabulary: registered, thin, no
-// lifecycle. In the hits install a project is a repo.
+// Project is one entry of the located-in vocabulary — thin, registration
+// and retirement its whole lifecycle. In the hits install a project is a
+// repo. A retired project keeps its registry key (Seq is the idempotence
+// marker replay depends on) but leaves every view: listings drop it,
+// located-in refuses it, and the slug is never reused.
 type Project struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Seq         uint64 `json:"seq"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Retired      bool   `json:"retired,omitempty"`
+	RetireReason string `json:"retire-reason,omitempty"`
+	Seq          uint64 `json:"seq"`
 }

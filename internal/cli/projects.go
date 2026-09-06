@@ -9,16 +9,18 @@ import (
 
 func runProject(inv *invocation) error {
 	if len(inv.args) == 0 {
-		return errors.New(`project: want "register" or "list"`)
+		return errors.New(`project: want "register", "retire" or "list"`)
 	}
 	sub, rest := inv.args[0], inv.args[1:]
 	switch sub {
 	case "register":
 		return runProjectRegister(inv, rest)
+	case "retire":
+		return runProjectRetire(inv, rest)
 	case "list":
 		return runProjectList(inv, rest)
 	default:
-		return fmt.Errorf(`project: unknown subcommand %q, want "register" or "list"`, sub)
+		return fmt.Errorf(`project: unknown subcommand %q, want "register", "retire" or "list"`, sub)
 	}
 }
 
@@ -54,6 +56,49 @@ func runProjectRegister(inv *invocation, args []string) error {
 	defer closeConn()
 	p, err := c.RegisterProject(inv.ctx, client.RegisterProjectRequest{
 		Actor: actor, Slug: lead[0], Name: lead[1], Description: *description,
+	})
+	if err != nil {
+		return err
+	}
+	return inv.printProject(p)
+}
+
+func runProjectRetire(inv *invocation, args []string) error {
+	fs := inv.flagSet("project retire", "project retire <slug> --reason <r>")
+	reason := fs.String("reason", "", "why the slug leaves the vocabulary")
+	lead, rest, err := leading(args, "<slug>")
+	if err != nil {
+		if errors.Is(err, errFlagsFirst) {
+			if perr := fs.Parse(args); perr != nil {
+				return perr
+			}
+			err = errors.New("missing <slug> argument")
+		}
+		fs.Usage()
+		return fmt.Errorf("project retire: %w", err)
+	}
+	if err := fs.Parse(rest); err != nil {
+		return err
+	}
+	if err := noTrailing(fs); err != nil {
+		return err
+	}
+	if *reason == "" {
+		fs.Usage()
+		return errors.New("project retire: --reason is required")
+	}
+	actor, err := inv.actorOrErr()
+	if err != nil {
+		return err
+	}
+
+	c, closeConn, err := inv.dial()
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	p, err := c.RetireProject(inv.ctx, client.RetireProjectRequest{
+		Actor: actor, Slug: lead[0], Reason: *reason,
 	})
 	if err != nil {
 		return err

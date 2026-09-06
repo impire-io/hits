@@ -308,7 +308,7 @@ func (s *store) replay(ctx context.Context) error {
 	}
 	var maxID uint64
 	err = s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
-		if op.Op != contract.OpRegistered {
+		if op.Op != contract.OpRegistered && op.Op != contract.OpRetired {
 			if n, perr := strconv.ParseUint(op.Entity, 10, 64); perr == nil && n > maxID {
 				maxID = n
 			}
@@ -365,7 +365,7 @@ func (s *store) raiseCounter(ctx context.Context, n uint64) error {
 
 func (s *store) foldOne(ctx context.Context, op contract.Op, seq uint64) error {
 	switch op.Op {
-	case contract.OpRegistered:
+	case contract.OpRegistered, contract.OpRetired:
 		current, rev, err := s.loadProject(ctx, op.Entity)
 		if err != nil {
 			return err
@@ -472,8 +472,42 @@ func (s *store) registerProject(ctx context.Context, op contract.Op) (*contract.
 	return s.saveProject(ctx, next, 0)
 }
 
+// retireProject validates and appends a project retirement. The CAS on the
+// project's subject (expecting the snapshot's sequence to be the subject's
+// last) serializes it against racing writes; the loser re-reads and fails
+// the invariant check against fresh state.
+func (s *store) retireProject(ctx context.Context, op contract.Op) (*contract.Project, error) {
+	current, rev, err := s.loadProject(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckProjectOp(current, op); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.ProjectOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(current.Seq))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "already-retired",
+				Message: fmt.Sprintf("project %s is already retired", op.Entity)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyProject(current, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveProject(ctx, next, rev)
+}
+
 // listProjects reads the registry keys of the state bucket — filtered at
-// the server, so item and system keys never travel.
+// the server, so item and system keys never travel. Retired projects stay
+// in the bucket but leave the vocabulary, so they are dropped here.
 func (s *store) listProjects(ctx context.Context) ([]contract.Project, error) {
 	lister, err := s.state.ListKeysFiltered(ctx, projectKeyPrefix+">")
 	if err != nil {
@@ -485,15 +519,17 @@ func (s *store) listProjects(ctx context.Context) ([]contract.Project, error) {
 		if err != nil {
 			return nil, err
 		}
-		if p != nil {
+		if p != nil && !p.Retired {
 			out = append(out, *p)
 		}
 	}
 	return out, nil
 }
 
-// checkRegistered rejects located-in values that name unregistered projects
-// — the registry check the contract package cannot do without I/O.
+// checkRegistered rejects located-in values that name unregistered or
+// retired projects — the registry check the contract package cannot do
+// without I/O. The two refusals stay distinct so the caller knows whether
+// to register the slug or stop using it.
 func (s *store) checkRegistered(ctx context.Context, locatedIn []string) error {
 	for _, slug := range locatedIn {
 		p, _, err := s.loadProject(ctx, slug)
@@ -503,6 +539,10 @@ func (s *store) checkRegistered(ctx context.Context, locatedIn []string) error {
 		if p == nil {
 			return &contract.InvariantError{Name: "unregistered-project",
 				Message: fmt.Sprintf("located-in names %q, which is not a registered project", slug)}
+		}
+		if p.Retired {
+			return &contract.InvariantError{Name: "retired-project",
+				Message: fmt.Sprintf("located-in names %q, which is retired", slug)}
 		}
 	}
 	return nil

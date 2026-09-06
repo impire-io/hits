@@ -58,6 +58,7 @@ func Start(ctx context.Context, nc *nats.Conn, cfg Config) (micro.Service, error
 		{"note", client.NoteSubject, h.note},
 		{"tombstone", client.TombstoneSubject, h.tombstone},
 		{"project-register", client.RegisterProjectSubject, h.registerProject},
+		{"project-retire", client.RetireProjectSubject, h.retireProject},
 		{"project-list", client.ListProjectsSubject, h.listProjects},
 	}
 	for _, e := range endpoints {

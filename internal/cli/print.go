@@ -104,6 +104,9 @@ func (inv *invocation) printProject(p contract.Project) error {
 	}
 	fmt.Fprintf(inv.out, "%s  %s\n", p.Slug, p.Name)
 	field(inv.out, "description", p.Description)
+	if p.Retired {
+		field(inv.out, "retired", p.RetireReason)
+	}
 	return nil
 }
 

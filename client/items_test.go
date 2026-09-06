@@ -285,6 +285,72 @@ func TestDuplicateProjectRegistrationFails(t *testing.T) {
 	}
 }
 
+// TestProjectRetirementOnTheWire is spec 013 end to end: retirement drops
+// the slug from the vocabulary and refuses every new reference, while the
+// items that already name it keep working.
+func TestProjectRetirementOnTheWire(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	h.mustProject(ctx, t, "hits")
+	h.mustProject(ctx, t, "001-hits")
+
+	// Filed against the slug while it was still vocabulary.
+	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Type: contract.Task, Report: "cutover leftovers", LocatedIn: []string{"001-hits"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	_, err = h.c.RetireProject(ctx, client.RetireProjectRequest{Actor: "daan", Slug: "ghost", Reason: "x"})
+	wantAPIError(t, err, "unregistered-project")
+
+	p, err := h.c.RetireProject(ctx, client.RetireProjectRequest{
+		Actor: "daan", Slug: "001-hits", Reason: "setup validation artifact",
+	})
+	if err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+	if !p.Retired || p.RetireReason != "setup validation artifact" || p.Name != "001-hits repo" {
+		t.Fatalf("retired project = %+v", p)
+	}
+
+	ps, err := h.c.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("list projects: %v", err)
+	}
+	if len(ps) != 1 || ps[0].Slug != "hits" {
+		t.Fatalf("projects after retire = %+v, want the retired slug dropped", ps)
+	}
+
+	// Every new reference is refused; the refusal names retirement.
+	_, err = h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Type: contract.Task, Report: "late reference", LocatedIn: []string{"001-hits"},
+	})
+	wantAPIError(t, err, "retired-project")
+	loc := []string{"001-hits"}
+	_, err = h.c.EditItem(ctx, client.EditItemRequest{Actor: "daan", ID: it.ID, LocatedIn: &loc})
+	wantAPIError(t, err, "retired-project")
+
+	// Terminal both ways: no re-registration, no double retire.
+	_, err = h.c.RegisterProject(ctx, client.RegisterProjectRequest{Actor: "daan", Slug: "001-hits", Name: "again"})
+	wantAPIError(t, err, "slug-retired")
+	_, err = h.c.RetireProject(ctx, client.RetireProjectRequest{Actor: "daan", Slug: "001-hits", Reason: "again"})
+	wantAPIError(t, err, "already-retired")
+
+	// History stands: the item that named the slug before retirement closes.
+	closed, err := h.c.TransitionItem(ctx, client.TransitionItemRequest{
+		Actor: "daan", ID: it.ID, To: contract.Resolved,
+		FixedBy: []contract.FixRef{{Commit: "abc1234"}},
+	})
+	if err != nil {
+		t.Fatalf("resolve item naming retired slug: %v", err)
+	}
+	if closed.Status != contract.Resolved || closed.LocatedIn[0] != "001-hits" {
+		t.Fatalf("closed item = %+v", closed)
+	}
+}
+
 // TestReplayReproducesProjections is FR-31, whole-state since decision
 // 0012: delete the state bucket — snapshots, registry, and counter all go
 // with it — restart the node (which replays the ops-log), and everything
@@ -293,6 +359,12 @@ func TestReplayReproducesProjections(t *testing.T) {
 	h := startStore(t)
 	ctx := testCtx(t)
 	h.mustProject(ctx, t, "hits")
+	h.mustProject(ctx, t, "old-hits")
+	if _, err := h.c.RetireProject(ctx, client.RetireProjectRequest{
+		Actor: "daan", Slug: "old-hits", Reason: "superseded",
+	}); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
 		Actor: "daan", Type: contract.Bug, Report: "replay must reproduce state",
@@ -344,8 +416,12 @@ func TestReplayReproducesProjections(t *testing.T) {
 		t.Fatalf("list projects after replay: %v", err)
 	}
 	if len(ps) != 1 || ps[0].Slug != "hits" || ps[0].Name != "hits repo" {
-		t.Fatalf("replayed projects = %+v", ps)
+		t.Fatalf("replayed projects = %+v, want the retired slug still dropped", ps)
 	}
+	// The retired snapshot rebuilt too — the refusal still names
+	// retirement, not just the subject CAS.
+	_, err = h.c.RegisterProject(ctx, client.RegisterProjectRequest{Actor: "daan", Slug: "old-hits", Name: "again"})
+	wantAPIError(t, err, "slug-retired")
 
 	// The counter went down with the bucket; replay derived it back from
 	// the log, so the next mint is the next dense ID, colliding with

@@ -199,6 +199,48 @@ func TestItemLifecycle(t *testing.T) {
 		"closed: ")
 }
 
+// TestProjectRetire retires a slug end to end: the listing drops it, new
+// located-in references are refused, the slug is never re-registered, and
+// an item that already named it still closes.
+func TestProjectRetire(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	run(t, connect, "project", "register", "001-hits", "HITS")
+	run(t, connect, "project", "register", "hits", "HITS repo")
+	id := itemID(t, run(t, connect, "create", "--type", "task", "--project", "001-hits", "cutover leftovers"))
+
+	out := run(t, connect, "project", "retire", "001-hits", "--reason", "setup validation artifact")
+	wantContains(t, out, "001-hits", "retired: setup validation artifact")
+
+	out = run(t, connect, "project", "list")
+	if strings.Contains(out, "001-hits") {
+		t.Errorf("retired slug still listed:\n%s", out)
+	}
+	wantContains(t, out, "hits")
+
+	// The vocabulary refuses the slug from now on, in every direction.
+	if err := runErr(t, connect, "create", "--type", "task", "--project", "001-hits", "late reference"); !strings.Contains(err.Error(), "retired-project") {
+		t.Errorf("create against retired slug = %v, want retired-project", err)
+	}
+	if err := runErr(t, connect, "project", "register", "001-hits", "HITS again"); !strings.Contains(err.Error(), "slug-retired") {
+		t.Errorf("re-register retired slug = %v, want slug-retired", err)
+	}
+	if err := runErr(t, connect, "project", "retire", "001-hits", "--reason", "again"); !strings.Contains(err.Error(), "already-retired") {
+		t.Errorf("double retire = %v, want already-retired", err)
+	}
+
+	// History stands: the item that named the slug before retirement closes.
+	out = run(t, connect, "resolve", id, "--fixed-by", "commit:abc123 done")
+	wantContains(t, out, "resolved")
+
+	// A missing reason is rejected during argument validation, pre-dial.
+	if err := runErr(t, guardConnector(t), "project", "retire", "001-hits"); !strings.Contains(err.Error(), "--reason is required") {
+		t.Errorf("missing reason = %v", err)
+	}
+}
+
 // TestWontfixCommand closes an item through the other sugar verb.
 func TestWontfixCommand(t *testing.T) {
 	h := startStore(t)

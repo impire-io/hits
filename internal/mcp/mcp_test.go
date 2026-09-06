@@ -136,7 +136,7 @@ func guardConnector(t *testing.T) mcp.Connector {
 	}
 }
 
-// TestToolList pins the surface: exactly the design's eighteen tools, the
+// TestToolList pins the surface: exactly the design's nineteen tools, the
 // six query tools read-only.
 func TestToolList(t *testing.T) {
 	h := startStore(t)
@@ -150,9 +150,9 @@ func TestToolList(t *testing.T) {
 	want := []string{
 		"block_item", "claim_item", "create_item", "edit_item", "get_item",
 		"graph_neighbors", "graph_walk", "link_items", "list_projects",
-		"note_item", "register_project", "release_item", "search_items",
-		"semantic_search", "tombstone_item", "transition_item",
-		"unblock_item", "unlink_items",
+		"note_item", "register_project", "release_item", "retire_project",
+		"search_items", "semantic_search", "tombstone_item",
+		"transition_item", "unblock_item", "unlink_items",
 	}
 	var got []string
 	readOnly := map[string]bool{}
@@ -270,6 +270,39 @@ func TestLinkEditTombstoneTools(t *testing.T) {
 	}
 	if ps := decode[[]contract.Project](t, res); len(ps) != 0 {
 		t.Errorf("projects = %+v, want none registered", ps)
+	}
+}
+
+// TestRetireProjectTool retires a slug through the tool surface: the reply
+// carries the retired snapshot and the listing no longer offers the slug.
+func TestRetireProjectTool(t *testing.T) {
+	h := startStore(t)
+	cs := session(t, h, "daan")
+
+	res := call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS"})
+	if res.IsError {
+		t.Fatalf("register_project: %s", resultText(res))
+	}
+
+	res = call(t, cs, "retire_project", map[string]any{"slug": "001-hits", "reason": "setup validation artifact"})
+	if res.IsError {
+		t.Fatalf("retire_project: %s", resultText(res))
+	}
+	if p := decode[contract.Project](t, res); !p.Retired || p.RetireReason != "setup validation artifact" {
+		t.Errorf("retired project = %+v", p)
+	}
+
+	res = call(t, cs, "list_projects", nil)
+	if res.IsError {
+		t.Fatalf("list_projects: %s", resultText(res))
+	}
+	if ps := decode[[]contract.Project](t, res); len(ps) != 0 {
+		t.Errorf("projects = %+v, want the retired slug dropped", ps)
+	}
+
+	res = call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS again"})
+	if !res.IsError || !strings.Contains(resultText(res), "slug-retired") {
+		t.Errorf("re-register retired slug = %v %q, want slug-retired", res.IsError, resultText(res))
 	}
 }
 

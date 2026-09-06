@@ -138,12 +138,27 @@ func ApplyProject(current *Project, op Op, seq uint64) (*Project, error) {
 	if current != nil && seq <= current.Seq {
 		return current, nil
 	}
-	if op.Op != OpRegistered {
+	switch op.Op {
+	case OpRegistered:
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		return &Project{Slug: op.Entity, Name: p.Name, Description: p.Description, Seq: seq}, nil
+	case OpRetired:
+		if current == nil {
+			return nil, fmt.Errorf("apply %s to project %s: no registration before retirement", op.Op, op.Entity)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		next := *current
+		next.Retired = true
+		next.RetireReason = p.Reason
+		next.Seq = seq
+		return &next, nil
+	default:
 		return nil, fmt.Errorf("apply: unknown project op %q", op.Op)
 	}
-	var p RegisteredPayload
-	if err := decode(op, &p); err != nil {
-		return nil, err
-	}
-	return &Project{Slug: op.Entity, Name: p.Name, Description: p.Description, Seq: seq}, nil
 }
