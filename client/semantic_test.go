@@ -16,10 +16,16 @@ import (
 	"github.com/impire-io/hits/internal/index/semantic"
 )
 
+// providerInputCap mimics a capped embedding model (e.g. a 512-token max
+// sequence length): the fake provider rejects longer inputs outright, the
+// way a real server does.
+const providerInputCap = 1500
+
 // fakeProvider is an OpenAI-API-compatible embedding endpoint producing
 // deterministic bag-of-words vectors, so similar texts get similar vectors
 // with no external calls. Texts containing "unembeddable" get a 500 — the
-// degradation case.
+// degradation case — and inputs over providerInputCap bytes are rejected
+// like a real capped model rejects oversized sequences.
 func fakeProvider(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +38,10 @@ func fakeProvider(t *testing.T) *httptest.Server {
 		}
 		if strings.Contains(req.Input, "unembeddable") {
 			http.Error(w, "no vector for you", http.StatusInternalServerError)
+			return
+		}
+		if len(req.Input) > providerInputCap {
+			http.Error(w, "input is larger than the max context size", http.StatusBadRequest)
 			return
 		}
 		vec := bagOfWords(req.Input)
@@ -172,5 +182,77 @@ func TestSemanticRebuildAndDegraded(t *testing.T) {
 	}
 	if len(reply.Hits) != 1 || reply.Hits[0].ID != a.ID {
 		t.Fatalf("hits = %+v, want only %s — the unembeddable item %s degrades alone", reply.Hits, a.ID, b.ID)
+	}
+}
+
+// TestSemanticChunkedTrail: a trail that has outgrown the provider's input
+// cap stays findable — the report and each note embed as their own chunks
+// (issue 21) — an item surfaces once per query no matter how many chunks
+// match, and an oversized single note degrades alone: skipped, never
+// truncated, while the item stays findable through its other chunks.
+func TestSemanticChunkedTrail(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	provider := fakeProvider(t)
+	startSemantic(t, h, provider.URL)
+
+	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Type: contract.Bug, Report: "orchestrator deadlock on shutdown",
+	})
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+
+	// Grow the trail well past the provider's cap; concatenated embedding
+	// would fail here and the whole item would vanish from the index.
+	filler := strings.TrimSpace(strings.Repeat("assorted trail prose padding ", 14)) // ~400 bytes
+	for i := 0; i < 4; i++ {
+		if _, err := h.c.NoteItem(ctx, client.NoteItemRequest{Actor: "claude", ID: a.ID, Text: filler}); err != nil {
+			t.Fatalf("filler note %d: %v", i, err)
+		}
+	}
+	if _, err := h.c.NoteItem(ctx, client.NoteItemRequest{Actor: "claude", ID: a.ID, Text: "the zanzibar quorum clock drifted"}); err != nil {
+		t.Fatalf("distinctive note: %v", err)
+	}
+	waitFor(t, "a note beyond the input cap to rank its item", func() bool {
+		return firstHit(ctx, t, h, "zanzibar quorum clock drifted") == a.ID
+	})
+
+	// Every chunk of a matches this query; the item must still surface once.
+	reply, err := h.c.SemanticSearch(ctx, client.SemanticRequest{Text: "assorted trail prose padding"})
+	if err != nil {
+		t.Fatalf("semantic search: %v", err)
+	}
+	if len(reply.Hits) != 1 || reply.Hits[0].ID != a.ID {
+		t.Fatalf("hits = %+v, want %s exactly once across its chunks", reply.Hits, a.ID)
+	}
+
+	// A single note over the cap: the provider refuses it, the chunk is
+	// skipped, and the rest of the trail keeps working. The sentinel note
+	// after it proves the fold moved on; ops embed in order, so once the
+	// sentinel is findable the oversized note has been processed.
+	oversized := strings.TrimSpace(strings.Repeat("quokka reconciliation stalled ", 150)) // ~4.5 KiB
+	if _, err := h.c.NoteItem(ctx, client.NoteItemRequest{Actor: "claude", ID: a.ID, Text: oversized}); err != nil {
+		t.Fatalf("oversized note: %v", err)
+	}
+	if _, err := h.c.NoteItem(ctx, client.NoteItemRequest{Actor: "claude", ID: a.ID, Text: "sentinel osprey landing"}); err != nil {
+		t.Fatalf("sentinel note: %v", err)
+	}
+	waitFor(t, "the sentinel note after the oversized one to be findable", func() bool {
+		reply, err := h.c.SemanticSearch(ctx, client.SemanticRequest{Text: "sentinel osprey landing"})
+		if err != nil || len(reply.Hits) == 0 {
+			return false
+		}
+		return reply.Hits[0].ID == a.ID && reply.Hits[0].Score > 0.9
+	})
+	// Had the oversized note been embedded — whole or truncated — its pure
+	// marker text would score near 1 here; a skipped chunk leaves only the
+	// unrelated chunks' near-zero similarity.
+	reply, err = h.c.SemanticSearch(ctx, client.SemanticRequest{Text: "quokka reconciliation stalled"})
+	if err != nil {
+		t.Fatalf("semantic search for the skipped note: %v", err)
+	}
+	if len(reply.Hits) > 0 && reply.Hits[0].Score > 0.5 {
+		t.Fatalf("hits = %+v — the oversized note should be skipped, not embedded", reply.Hits)
 	}
 }
