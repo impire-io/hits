@@ -47,9 +47,11 @@ non-negotiables.
   in one process, dispatched to `internal/fleet` before the client parser so
   the client tree never imports service code.
 - `internal/fleet` — the composition root behind `hits up`: starts all four
-  services fail-fast, each on its own connection under its standalone
-  `nats.Name`; the semantic index only when the embedding provider is
-  configured (`hits-hq/02-DESIGN/hits-up.md`). Nothing imports it back —
+  services fail-fast on one shared connection named `hits-up` — micro
+  services multiplex on it, so the whole platform costs a single seat in
+  the account's connection allowance (decision 0006); the semantic index
+  only when the embedding provider is configured
+  (`hits-hq/02-DESIGN/hits-up.md`). Nothing imports it back —
   depguard-enforced, like the rest of the boundary.
 - `cmd/hits-mcp` — the MCP server binary, the agent action surface; thin main
   over `internal/mcp` (stdio MCP via the official Go SDK, one tool per client
