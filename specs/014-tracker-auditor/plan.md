@@ -27,9 +27,15 @@ internal/cli/cli.go         usage text + dispatch case
   located-in when bare.
 - **The walk is the enumeration.** `GetItem("1"), GetItem("2"), …`
   until the APIError code `not-found` — dense server-minted IDs make
-  the first gap the end of the corpus. Tombstoned snapshots are
-  returned by the service (tombstone is a fold flag, not a delete) and
-  skipped here.
+  the first gap the end of the corpus. The gets run a window of eight
+  at a time (the search table's resolver bound) so the wire
+  round-trips overlap rather than queue; density means everything past
+  the first gap is discarded, errors included. Clone evidence loads
+  fan out the same way, one goroutine per mapping. The per-ref checks
+  stay sequential and in item order — in-memory scans plus the odd
+  local git exec, where deterministic output is worth more than the
+  microseconds. Tombstoned snapshots are returned by the service
+  (tombstone is a fold flag, not a delete) and skipped here.
 - **Findings are one flat list.** `{level, kind, item, repo, ref,
   detail}` with kinds `pr-unmerged`, `commit-unmerged`, `merged-open`,
   `merged-untracked` (failures) and `unverifiable` (warning) — the

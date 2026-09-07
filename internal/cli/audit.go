@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
@@ -32,17 +33,32 @@ func runAudit(inv *invocation) error {
 		fs.Usage()
 		return errors.New("audit: at least one --repo <slug>=<path> mapping is required")
 	}
-	repos := make(map[string]*repoEvidence, len(mappings))
-	for _, m := range mappings {
+	slugs := make([]string, len(mappings))
+	paths := make([]string, len(mappings))
+	for i, m := range mappings {
 		slug, path, ok := strings.Cut(m, "=")
 		if !ok || slug == "" || path == "" {
 			return fmt.Errorf("audit: bad --repo %q: want <slug>=<path>", m)
 		}
-		ev, err := loadRepo(path)
-		if err != nil {
-			return fmt.Errorf("audit: --repo %s: %w", m, err)
+		slugs[i], paths[i] = slug, path
+	}
+	evs := make([]*repoEvidence, len(mappings))
+	loadErrs := make([]error, len(mappings))
+	var wg sync.WaitGroup
+	for i := range mappings {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			evs[i], loadErrs[i] = loadRepo(paths[i])
+		}()
+	}
+	wg.Wait()
+	repos := make(map[string]*repoEvidence, len(mappings))
+	for i, m := range mappings {
+		if loadErrs[i] != nil {
+			return fmt.Errorf("audit: --repo %s: %w", m, loadErrs[i])
 		}
-		repos[slug] = ev
+		repos[slugs[i]] = evs[i]
 	}
 
 	c, closeConn, err := inv.dial()
@@ -123,21 +139,47 @@ func repoIdentity(url string) string {
 	return owner + "/" + repo
 }
 
+// walkWindow is how many gets are in flight at once during the corpus
+// walk — the same bound the search table's resolver uses.
+const walkWindow = 8
+
 // walkItems reads the whole corpus: IDs are server-minted dense integers,
-// so walking GetItem from 1 to the first not-found is complete by
-// construction, and no index is consulted.
+// so the walk from 1 to the first not-found is complete by construction,
+// and no index is consulted. Gets fan out a window at a time so the wire
+// round-trips overlap; density means everything past the first gap is
+// noise, so errors beyond it are discarded with it.
 func walkItems(ctx context.Context, c *client.Client) ([]contract.Item, error) {
 	var items []contract.Item
-	for id := 1; ; id++ {
-		it, err := c.GetItem(ctx, strconv.Itoa(id))
-		var apiErr *client.APIError
-		if errors.As(err, &apiErr) && apiErr.Code == "not-found" {
-			return items, nil
+	for base := 1; ; base += walkWindow {
+		batch := make([]*contract.Item, walkWindow)
+		errs := make([]error, walkWindow)
+		var wg sync.WaitGroup
+		for i := range walkWindow {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				it, err := c.GetItem(ctx, strconv.Itoa(base+i))
+				var apiErr *client.APIError
+				switch {
+				case err == nil:
+					batch[i] = &it
+				case errors.As(err, &apiErr) && apiErr.Code == "not-found":
+					// the end of the corpus falls in this window
+				default:
+					errs[i] = fmt.Errorf("get %d: %w", base+i, err)
+				}
+			}()
 		}
-		if err != nil {
-			return nil, fmt.Errorf("get %d: %w", id, err)
+		wg.Wait()
+		for i, it := range batch {
+			if it == nil {
+				if errs[i] != nil {
+					return nil, errs[i]
+				}
+				return items, nil
+			}
+			items = append(items, *it)
 		}
-		items = append(items, it)
 	}
 }
 
