@@ -61,6 +61,22 @@ func StartJetStream(t *testing.T) (url string) {
 	})
 }
 
+// StartJetStreamMaxSubs runs an in-process JetStream server that caps
+// each client connection at maxSubs subscriptions — the shape of an
+// account max-subscriptions limit, which rejects a shared connection's
+// subscriptions mid-registration (issue 20). The server is shut down
+// when the test ends.
+func StartJetStreamMaxSubs(t *testing.T, maxSubs int) (url string) {
+	t.Helper()
+	return start(t, &server.Options{
+		Host:      "127.0.0.1",
+		Port:      -1, // pick a random free port
+		JetStream: true,
+		StoreDir:  t.TempDir(),
+		MaxSubs:   maxSubs,
+	})
+}
+
 // StartJetStreamMaxBytesRequired runs an in-process JetStream server whose
 // account requires every stream config to declare max bytes — the shape
 // Synadia Cloud enforces (hits-hq issue 003). The server is shut down when
