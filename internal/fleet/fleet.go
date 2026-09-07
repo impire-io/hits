@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -45,9 +46,13 @@ func DialConnector(contextName string, d connect.Direct) Connector {
 // index is not started — the fleet functions fully without it
 // (hits-hq/02-DESIGN/services.md § embeddings). MaxBytes is the ops
 // stream's byte budget, 0 meaning the decided default (decision 0005).
+// ErrOut receives one line per asynchronous connection error — the only
+// channel through which the server reports subscription rejections, and
+// after boot the only witness to them (issue 20); nil means stderr.
 type Config struct {
 	Semantic semantic.Config
 	MaxBytes int64
+	ErrOut   io.Writer
 }
 
 // Fleet is one running composition.
@@ -59,8 +64,11 @@ type Fleet struct {
 
 // Start brings the fleet up on one shared connection, fail-fast: any
 // service that cannot start stops the ones already running, closes the
-// connection, and returns the error. hits-node goes first — it ensures
-// the ops-log stream the indexers refuse to start without.
+// connection, and returns the error. A service whose subscriptions the
+// server rejects mid-registration counts as one that cannot start —
+// each registration is verified on the wire before the next (issue 20).
+// hits-node goes first — it ensures the ops-log stream the indexers
+// refuse to start without.
 func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	f := &Fleet{}
 	ok := false
@@ -77,6 +85,25 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 	f.stops = append(f.stops, nc.Close)
 	f.URL = nc.ConnectedUrl()
 
+	// The server reports a rejected subscription (an account's
+	// max-subscriptions limit, a permissions violation) only through
+	// this handler — Subscribe itself returns nil, and micro reacts by
+	// silently stopping the service whose subject was refused. Installed
+	// before any service registers so every micro wrapper chains back
+	// here, and rejections stay loud for the process's whole life —
+	// reconnect-time re-subscription can be refused the same way.
+	errOut := cfg.ErrOut
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+	nc.SetErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
+		if sub != nil {
+			fmt.Fprintf(errOut, "hits up: connection error on %q: %v\n", sub.Subject, err)
+			return
+		}
+		fmt.Fprintf(errOut, "hits up: connection error: %v\n", err)
+	})
+
 	startOne := func(name string, start func() (stop func(), err error)) error {
 		stop, err := start()
 		if err != nil {
@@ -84,6 +111,16 @@ func Start(ctx context.Context, connect Connector, cfg Config) (*Fleet, error) {
 		}
 		f.stops = append(f.stops, stop)
 		f.Running = append(f.Running, name)
+		// A rejection arrives after the subscribe call succeeds, so
+		// verify: the server answers the flush after it has refused
+		// any earlier subscription, and the client records that
+		// refusal before releasing the flush.
+		if err := nc.FlushTimeout(5 * time.Second); err != nil {
+			return fmt.Errorf("%s: verify registration: %w", name, err)
+		}
+		if err := nc.LastError(); err != nil {
+			return fmt.Errorf("%s: registration incomplete: %w", name, err)
+		}
 		return nil
 	}
 
@@ -199,7 +236,7 @@ func RunUp(ctx context.Context, args []string, out, errOut io.Writer, connectorF
 		return errors.New("--embedding-url and --embedding-model go together; pass both or neither")
 	}
 
-	cfg := Config{}
+	cfg := Config{ErrOut: errOut}
 	if *maxBytes != "" {
 		n, err := node.ParseSize(*maxBytes)
 		if err != nil {

@@ -211,6 +211,36 @@ func TestStartFailFast(t *testing.T) {
 	}
 }
 
+// TestStartFailsWhenSubscriptionsAreRejected reproduces issue 20: a
+// max-subscriptions limit the fleet exceeds rejects subscriptions
+// mid-registration, after the subscribe calls already returned nil — the
+// server never registers them, so the affected service serves nothing.
+// Start must notice and fail whichever service crossed the limit, and
+// the rejection must reach the error writer.
+func TestStartFailsWhenSubscriptionsAreRejected(t *testing.T) {
+	url := natstest.StartJetStreamMaxSubs(t, 25) // fewer than the fleet needs
+	provider := fakeProvider(t)
+	ctx := testCtx(t)
+
+	errOut := &syncBuffer{}
+	f, err := fleet.Start(ctx, connector(url), fleet.Config{
+		Semantic: semantic.Config{
+			BaseURL: provider.URL, APIKey: "test-key", Model: "fake-model",
+		},
+		ErrOut: errOut,
+	})
+	if f != nil {
+		f.Stop()
+		t.Fatal("a partially registered Start must not return a fleet")
+	}
+	if !errors.Is(err, nats.ErrMaxSubscriptionsExceeded) {
+		t.Fatalf("start error = %v, want the server's max-subscriptions rejection", err)
+	}
+	eventually(t, "the rejection on the error writer", func() bool {
+		return strings.Contains(errOut.String(), "maximum subscriptions exceeded")
+	})
+}
+
 // TestStopStopsEverything proves Stop is total: no service answers and
 // the one shared connection the fleet opened is closed.
 func TestStopStopsEverything(t *testing.T) {
