@@ -38,8 +38,9 @@ silently dropped, but not a failure of the record itself.
 The audit is a periodic whole-corpus net, meant to run sparsely —
 before a release, while grooming the board, as a CI check on main —
 never as a step of every close. One pass is kept cheap for exactly that
-shape: the corpus walk fans its gets out in bounded windows, the clones
-load concurrently, and each clone's history is read once.
+shape: the corpus walk fans its gets out in bounded windows (`--fan`,
+default 8), the clones load concurrently, and each clone's history is
+read once.
 
 ## Out of scope
 
@@ -70,9 +71,10 @@ load concurrently, and each clone's history is read once.
 - **FR-02** The audit reads every item by walking `GetItem` from ID 1
   until the first `not-found` — IDs are server-minted dense integers,
   so the walk is complete by construction and no index is consulted
-  (the index is never authority). The gets fan out in bounded windows
-  so wire round-trips overlap, and the clone evidence loads
-  concurrently. Tombstoned items are skipped.
+  (the index is never authority). The gets fan out `--fan` at a time
+  (default 8) so wire round-trips overlap — a value below 1 is
+  rejected before dialing — and the clone evidence loads concurrently.
+  Tombstoned items are skipped.
 - **FR-03** For each resolved item, every `pr:owner/repo#N` ref is
   verified against the mapped clone with that identity: some commit
   subject on main matches `Merge pull request #N` or `(#N)` (exact

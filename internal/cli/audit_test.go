@@ -302,4 +302,24 @@ func TestAuditRejectsBeforeDialing(t *testing.T) {
 	if !strings.Contains(err.Error(), "no origin/main or main") {
 		t.Errorf("not a repo: %v", err)
 	}
+	err = runErr(t, guardConnector(t), "audit", "--repo", "hits="+t.TempDir(), "--fan", "0")
+	if !strings.Contains(err.Error(), "--fan 0: want at least 1") {
+		t.Errorf("zero fan: %v", err)
+	}
+}
+
+func TestAuditFanIsConfigurable(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+	repo := newGitRepo(t, "impire-io/hits")
+
+	run(t, connect, "create", "--type", "bug", "one symptom")
+	run(t, connect, "create", "--type", "bug", "another symptom")
+
+	out, err := auditOut(t, connect, "audit", "--repo", "hits="+repo.path, "--fan", "1")
+	if err != nil {
+		t.Fatalf("--fan 1 walk failed: %v\n%s", err, out)
+	}
+	wantContains(t, out, "audited 2 items")
 }

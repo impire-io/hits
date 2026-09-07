@@ -20,9 +20,10 @@ import (
 // its item open. Contradictions fail the command; refs the mapping cannot
 // check only warn.
 func runAudit(inv *invocation) error {
-	fs := inv.flagSet("audit", "audit --repo <slug>=<path> [--repo ...]")
+	fs := inv.flagSet("audit", "audit --repo <slug>=<path> [--repo ...] [--fan <n>]")
 	var mappings multiFlag
 	fs.Var(&mappings, "repo", "project slug and its local clone, <slug>=<path> (repeatable)")
+	fan := fs.Int("fan", defaultFan, "concurrent item gets during the corpus walk")
 	if err := fs.Parse(inv.args); err != nil {
 		return err
 	}
@@ -32,6 +33,9 @@ func runAudit(inv *invocation) error {
 	if len(mappings) == 0 {
 		fs.Usage()
 		return errors.New("audit: at least one --repo <slug>=<path> mapping is required")
+	}
+	if *fan < 1 {
+		return fmt.Errorf("audit: --fan %d: want at least 1", *fan)
 	}
 	slugs := make([]string, len(mappings))
 	paths := make([]string, len(mappings))
@@ -66,7 +70,7 @@ func runAudit(inv *invocation) error {
 		return err
 	}
 	defer closeConn()
-	items, err := walkItems(inv.ctx, c)
+	items, err := walkItems(inv.ctx, c, *fan)
 	if err != nil {
 		return err
 	}
@@ -139,22 +143,23 @@ func repoIdentity(url string) string {
 	return owner + "/" + repo
 }
 
-// walkWindow is how many gets are in flight at once during the corpus
-// walk — the same bound the search table's resolver uses.
-const walkWindow = 8
+// defaultFan is the default --fan: how many gets are in flight at once
+// during the corpus walk — the same bound the search table's resolver
+// uses.
+const defaultFan = 8
 
 // walkItems reads the whole corpus: IDs are server-minted dense integers,
 // so the walk from 1 to the first not-found is complete by construction,
-// and no index is consulted. Gets fan out a window at a time so the wire
-// round-trips overlap; density means everything past the first gap is
-// noise, so errors beyond it are discarded with it.
-func walkItems(ctx context.Context, c *client.Client) ([]contract.Item, error) {
+// and no index is consulted. Gets fan out a window of fan at a time so
+// the wire round-trips overlap; density means everything past the first
+// gap is noise, so errors beyond it are discarded with it.
+func walkItems(ctx context.Context, c *client.Client, fan int) ([]contract.Item, error) {
 	var items []contract.Item
-	for base := 1; ; base += walkWindow {
-		batch := make([]*contract.Item, walkWindow)
-		errs := make([]error, walkWindow)
+	for base := 1; ; base += fan {
+		batch := make([]*contract.Item, fan)
+		errs := make([]error, fan)
 		var wg sync.WaitGroup
-		for i := range walkWindow {
+		for i := range fan {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
