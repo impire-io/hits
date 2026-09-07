@@ -47,6 +47,10 @@ Vocabulary and queries:
   semantic    nearest items to a text: semantic <text> [--limit <n>]
   graph       edges at a node: neighbors <id> | walk <id>  [flags]
 
+Audit (git as evidence, the tracker as the record):
+  audit       hold fixed-by refs and merged work against local clones'
+              main: audit --repo <slug>=<path> [--repo ...]
+
 Run the platform:
   up          run the service fleet in this process (flags follow the
               subcommand — see 'hits up -h')
@@ -64,6 +68,11 @@ Service:
 Global flags go before the command, command flags after the leading <id>.
 Run 'hits <command> -h' for a command's flags.
 `
+
+// defaultFan is the default --fan wherever a command keeps a window of
+// concurrent gets in flight — the search table's snapshot resolver and
+// the audit's corpus walk share the one bound.
+const defaultFan = 8
 
 // Connector opens the NATS connection a command talks through. Production use
 // resolves a NATS context; tests inject a connection to an embedded server.
@@ -145,6 +154,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runSemantic(inv)
 	case "graph":
 		return runGraph(inv)
+	case "audit":
+		return runAudit(inv)
 	case "context":
 		return runContext(inv)
 	case "auth":
