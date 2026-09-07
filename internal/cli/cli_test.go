@@ -400,6 +400,28 @@ func TestSearchUnknownColumn(t *testing.T) {
 	}
 }
 
+func TestSearchFanIsConfigurable(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	run(t, connect, "create", "--type", "bug", "fan fodder one")
+	run(t, connect, "create", "--type", "bug", "fan fodder two")
+
+	svc, err := search.Start(testCtx(t), h.svcConn)
+	if err != nil {
+		t.Fatalf("start search: %v", err)
+	}
+	t.Cleanup(svc.Stop)
+
+	out := run(t, connect, "search", "fodder", "--fan", "1")
+	wantContains(t, out, "fan fodder one", "fan fodder two", "total: 2")
+
+	if err := runErr(t, guardConnector(t), "search", "--fan", "0"); !strings.Contains(err.Error(), "--fan 0: want at least 1") {
+		t.Errorf("zero fan: %v", err)
+	}
+}
+
 func TestSearchJSON(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()

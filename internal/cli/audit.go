@@ -143,11 +143,6 @@ func repoIdentity(url string) string {
 	return owner + "/" + repo
 }
 
-// defaultFan is the default --fan: how many gets are in flight at once
-// during the corpus walk — the same bound the search table's resolver
-// uses.
-const defaultFan = 8
-
 // walkItems reads the whole corpus: IDs are server-minted dense integers,
 // so the walk from 1 to the first not-found is complete by construction,
 // and no index is consulted. Gets fan out a window of fan at a time so

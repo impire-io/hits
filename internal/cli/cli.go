@@ -69,6 +69,11 @@ Global flags go before the command, command flags after the leading <id>.
 Run 'hits <command> -h' for a command's flags.
 `
 
+// defaultFan is the default --fan wherever a command keeps a window of
+// concurrent gets in flight — the search table's snapshot resolver and
+// the audit's corpus walk share the one bound.
+const defaultFan = 8
+
 // Connector opens the NATS connection a command talks through. Production use
 // resolves a NATS context; tests inject a connection to an embedded server.
 type Connector func(contextName string) (*nats.Conn, error)

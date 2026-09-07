@@ -104,3 +104,6 @@ read once.
 - **FR-08** Tested against real NATS via the embedded harness (race
   detector on) with real temporary git repositories — no mocked git,
   no mocked NATS.
+- **FR-09** `--fan` is one vocabulary across the CLI: `hits search`
+  grows the same flag with the same shared default for its snapshot
+  resolver, so no window of concurrent gets is a hard-coded number.

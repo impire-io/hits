@@ -9,7 +9,11 @@ internal/cli/audit.go       runAudit: flag parsing, the dense GetItem
 internal/cli/audit_test.go  harness + real temp git repos: every
                             finding kind, the clean pass, exit and
                             JSON behavior, pre-dial rejections
-internal/cli/cli.go         usage text + dispatch case
+internal/cli/cli.go         usage text + dispatch case + the shared
+                            defaultFan
+internal/cli/query.go       the search resolver's window becomes
+                            --fan too (FR-09), same default
+internal/cli/cli_test.go    search --fan coverage
 ```
 
 ## Mechanics

@@ -19,6 +19,7 @@ func runSearch(inv *invocation) error {
 	offset := fs.Int("offset", 0, "page start")
 	var columns multiFlag
 	fs.Var(&columns, "columns", "table columns, comma-separated (repeatable); default: every populated field")
+	fan := fs.Int("fan", defaultFan, "concurrent snapshot gets when resolving hits")
 
 	var query string
 	args := inv.args
@@ -34,6 +35,9 @@ func runSearch(inv *invocation) error {
 	cols, err := parseColumns(columns)
 	if err != nil {
 		return err
+	}
+	if *fan < 1 {
+		return fmt.Errorf("search: --fan %d: want at least 1", *fan)
 	}
 
 	c, closeConn, err := inv.dial()
@@ -51,7 +55,7 @@ func runSearch(inv *invocation) error {
 	if err != nil {
 		return err
 	}
-	rows, err := fetchRows(inv.ctx, c, reply.Hits)
+	rows, err := fetchRows(inv.ctx, c, reply.Hits, *fan)
 	if err != nil {
 		return err
 	}
@@ -59,14 +63,14 @@ func runSearch(inv *invocation) error {
 }
 
 // fetchRows resolves each hit to its item snapshot — the index is never
-// authority; state comes from the hits service. At most eight gets are in
+// authority; state comes from the hits service. At most fan gets are in
 // flight at once, and hit order is preserved. A hit whose item is gone (a
 // tombstone race) keeps its id and score with no snapshot; any other failure
 // fails the whole command rather than presenting a silently partial table.
-func fetchRows(ctx context.Context, c *client.Client, hits []client.SearchHit) ([]searchRow, error) {
+func fetchRows(ctx context.Context, c *client.Client, hits []client.SearchHit, fan int) ([]searchRow, error) {
 	rows := make([]searchRow, len(hits))
 	errs := make([]error, len(hits))
-	sem := make(chan struct{}, 8)
+	sem := make(chan struct{}, fan)
 	var wg sync.WaitGroup
 	for i, h := range hits {
 		rows[i] = searchRow{ID: h.ID, Score: h.Score}
