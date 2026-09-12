@@ -157,7 +157,7 @@ func runEdit(inv *invocation) error {
 	if parseErr != nil {
 		return parseErr
 	}
-	if req.Priority == nil && req.LocatedIn == nil && req.DiscoveredWhile == nil && req.Lands == nil {
+	if req.Priority == nil && req.Initiative == nil && req.LocatedIn == nil && req.DiscoveredWhile == nil && req.Lands == nil {
 		return errors.New("edit: nothing to change")
 	}
 

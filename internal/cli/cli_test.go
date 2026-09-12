@@ -609,3 +609,24 @@ func TestCreateRequiresInitiative(t *testing.T) {
 		t.Errorf("want the no-initiative refusal, got %v", err)
 	}
 }
+
+// TestEditAssignsLegacyInitiative: the one edit the 0016 backfill runs —
+// --initiative alone must reach the wire (the nothing-to-change guard
+// once dropped it) and must land on a closed legacy item.
+func TestEditAssignsLegacyInitiative(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+
+	id := itemID(t, run(t, connect, "create", "--type", "bug", "a legacy-style record"))
+	run(t, connect, "resolve", id, "--fixed-by", "commit:abc closed before assignment")
+
+	// The harness mints prefixed IDs, so drive the edit through the same
+	// CLI path the backfill uses and assert the refusal is the server's
+	// initiative-immutable — proof the flag reached the wire — rather
+	// than the CLI's nothing-to-change.
+	err := runErr(t, connect, "edit", id, "--initiative", "hits")
+	if !strings.Contains(err.Error(), "initiative-immutable") {
+		t.Errorf("edit --initiative on a prefixed item = %v, want the server's initiative-immutable", err)
+	}
+}
