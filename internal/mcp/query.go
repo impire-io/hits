@@ -10,11 +10,12 @@ import (
 )
 
 type searchItemsIn struct {
-	Query  string          `json:"query,omitempty" jsonschema:"full-text query over reports and notes; empty matches everything"`
-	Type   contract.Type   `json:"type,omitempty" jsonschema:"filter by item type"`
-	Status contract.Status `json:"status,omitempty" jsonschema:"filter by status"`
-	Limit  int             `json:"limit,omitempty" jsonschema:"page size (service default 10, capped at 100)"`
-	Offset int             `json:"offset,omitempty" jsonschema:"page start"`
+	Query      string          `json:"query,omitempty" jsonschema:"full-text query over reports and notes; empty matches everything"`
+	Type       contract.Type   `json:"type,omitempty" jsonschema:"filter by item type"`
+	Status     contract.Status `json:"status,omitempty" jsonschema:"filter by status"`
+	Initiative string          `json:"initiative,omitempty" jsonschema:"filter by initiative"`
+	Limit      int             `json:"limit,omitempty" jsonschema:"page size (service default 10, capped at 100)"`
+	Offset     int             `json:"offset,omitempty" jsonschema:"page start"`
 }
 
 type semanticSearchIn struct {
@@ -41,7 +42,8 @@ func addQueryTools(s *sdk.Server, c *client.Client) {
 	sdk.AddTool(s, &sdk.Tool{Name: "search_items", Description: "Full-text search over reports and notes; hits resolve to item ids — read state with get_item.", Annotations: readOnly},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in searchItemsIn) (*sdk.CallToolResult, client.SearchReply, error) {
 			r, err := c.SearchItems(ctx, client.SearchRequest{
-				Query: in.Query, Type: in.Type, Status: in.Status, Limit: in.Limit, Offset: in.Offset,
+				Query: in.Query, Type: in.Type, Status: in.Status, Initiative: in.Initiative,
+				Limit: in.Limit, Offset: in.Offset,
 			})
 			return nil, r, err
 		})

@@ -11,8 +11,10 @@ import (
 // OpType names what happened. Ops are semantic — never "state is now X".
 type OpType string
 
-// The op catalog. All but OpRegistered and OpRetired apply to items;
-// OpRegistered and OpRetired apply to projects.
+// The op catalog. OpRegistered and OpRetired apply to projects and
+// initiatives alike — consumers dispatch on the subject kind, never the
+// op type alone (02-DESIGN/ops-log.md § subjects); OpAssigned applies to
+// projects; everything else applies to items.
 const (
 	OpCreated      OpType = "created"
 	OpNoted        OpType = "noted"
@@ -26,6 +28,7 @@ const (
 	OpUnlinked     OpType = "unlinked"
 	OpTombstoned   OpType = "tombstoned"
 	OpRegistered   OpType = "registered"
+	OpAssigned     OpType = "assigned"
 	OpRetired      OpType = "retired"
 )
 
@@ -68,11 +71,13 @@ func NewOp(op OpType, entity, actor string, payload any) (Op, error) {
 }
 
 // CreatedPayload opens an item. The reporter is the op's actor; an empty
-// priority defaults to Normal.
+// priority defaults to Normal. Initiative echoes the minted ID's prefix
+// (decision 0016) — empty only on pre-initiative legacy ops.
 type CreatedPayload struct {
 	Type            Type     `json:"type"`
 	Report          string   `json:"report"`
 	Priority        Priority `json:"priority,omitempty"`
+	Initiative      string   `json:"initiative,omitempty"`
 	LocatedIn       []string `json:"located-in,omitempty"`
 	DiscoveredWhile string   `json:"discovered-while,omitempty"`
 }
@@ -83,9 +88,11 @@ type NotedPayload struct {
 }
 
 // EditedPayload changes properties outside the lifecycle. Nil fields are
-// left untouched.
+// left untouched. Initiative is legal only on legacy bare-ID items — on a
+// prefixed item the initiative is immutable in the ID (decision 0016).
 type EditedPayload struct {
 	Priority        *Priority `json:"priority,omitempty"`
+	Initiative      *string   `json:"initiative,omitempty"`
 	LocatedIn       *[]string `json:"located-in,omitempty"`
 	DiscoveredWhile *string   `json:"discovered-while,omitempty"`
 	Lands           *[]Land   `json:"lands,omitempty"`
@@ -127,13 +134,23 @@ type TombstonedPayload struct {
 	Reason string `json:"reason"`
 }
 
-// RegisteredPayload registers a project; the slug is the op's entity.
+// RegisteredPayload registers a project or an initiative; the slug is the
+// op's entity, and the subject says which vocabulary. Initiative names the
+// project's initiative — required on project registrations since decision
+// 0016, meaningless on initiative registrations, empty on pre-0016 ops.
 type RegisteredPayload struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	Initiative  string `json:"initiative,omitempty"`
 }
 
-// RetiredPayload retires a project: the slug leaves the located-in
+// AssignedPayload moves a project to an initiative — or backfills a
+// pre-0016 registration (decision 0016).
+type AssignedPayload struct {
+	Initiative string `json:"initiative"`
+}
+
+// RetiredPayload retires a project or an initiative: the slug leaves its
 // vocabulary, history stands, and the slug is never reused.
 type RetiredPayload struct {
 	Reason string `json:"reason"`

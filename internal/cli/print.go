@@ -104,6 +104,7 @@ func (inv *invocation) printProject(p contract.Project) error {
 	}
 	fmt.Fprintf(inv.out, "%s  %s\n", p.Slug, p.Name)
 	field(inv.out, "description", p.Description)
+	field(inv.out, "initiative", p.Initiative)
 	if p.Retired {
 		field(inv.out, "retired", p.RetireReason)
 	}
@@ -116,7 +117,30 @@ func (inv *invocation) printProjects(ps []contract.Project) error {
 	}
 	tw := tabwriter.NewWriter(inv.out, 0, 0, 2, ' ', 0)
 	for _, p := range ps {
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", p.Slug, p.Name, p.Description)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.Slug, p.Name, p.Initiative, p.Description)
+	}
+	return tw.Flush()
+}
+
+func (inv *invocation) printInitiative(i contract.Initiative) error {
+	if inv.json {
+		return emit(inv.out, i)
+	}
+	fmt.Fprintf(inv.out, "%s  %s\n", i.Slug, i.Name)
+	field(inv.out, "description", i.Description)
+	if i.Retired {
+		field(inv.out, "retired", i.RetireReason)
+	}
+	return nil
+}
+
+func (inv *invocation) printInitiatives(is []contract.Initiative) error {
+	if inv.json {
+		return emit(inv.out, is)
+	}
+	tw := tabwriter.NewWriter(inv.out, 0, 0, 2, ' ', 0)
+	for _, i := range is {
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", i.Slug, i.Name, i.Description)
 	}
 	return tw.Flush()
 }

@@ -22,6 +22,7 @@ type createItemIn struct {
 	Type            contract.Type     `json:"type" jsonschema:"item type: bug, task, or improvement"`
 	Report          string            `json:"report" jsonschema:"the symptom in plain terms"`
 	Priority        contract.Priority `json:"priority,omitempty" jsonschema:"triage signal: high, normal, or low (default normal)"`
+	Initiative      string            `json:"initiative,omitempty" jsonschema:"initiative the ID mints from (default: the server's startup initiative)"`
 	LocatedIn       []string          `json:"located-in,omitempty" jsonschema:"registered project slugs; required for a task"`
 	DiscoveredWhile string            `json:"discovered-while,omitempty" jsonschema:"the context the item was noticed in"`
 }
@@ -29,6 +30,7 @@ type createItemIn struct {
 type editItemIn struct {
 	ID              string             `json:"id" jsonschema:"the item's id"`
 	Priority        *contract.Priority `json:"priority,omitempty" jsonschema:"triage signal: high, normal, or low"`
+	Initiative      *string            `json:"initiative,omitempty" jsonschema:"assign a legacy bare-ID item to an initiative"`
 	LocatedIn       *[]string          `json:"located-in,omitempty" jsonschema:"registered project slugs; replaces the list"`
 	DiscoveredWhile *string            `json:"discovered-while,omitempty" jsonschema:"the context the item was noticed in; empty clears"`
 	Lands           *[]contract.Land   `json:"lands,omitempty" jsonschema:"cross-repo landing order; empty list clears"`
@@ -72,6 +74,23 @@ type registerProjectIn struct {
 	Slug        string `json:"slug" jsonschema:"chosen subject-token-safe slug"`
 	Name        string `json:"name" jsonschema:"display name"`
 	Description string `json:"description,omitempty" jsonschema:"what the project is"`
+	Initiative  string `json:"initiative" jsonschema:"the initiative the project belongs to"`
+}
+
+type assignProjectIn struct {
+	Slug       string `json:"slug" jsonschema:"the project's slug"`
+	Initiative string `json:"initiative" jsonschema:"the initiative the project moves to"`
+}
+
+type registerInitiativeIn struct {
+	Slug        string `json:"slug" jsonschema:"chosen slug; must not end in an all-digit segment"`
+	Name        string `json:"name" jsonschema:"display name"`
+	Description string `json:"description,omitempty" jsonschema:"what the initiative is"`
+}
+
+type retireInitiativeIn struct {
+	Slug   string `json:"slug" jsonschema:"the initiative's slug"`
+	Reason string `json:"reason" jsonschema:"why the slug leaves the vocabulary"`
 }
 
 type retireProjectIn struct {
@@ -81,12 +100,16 @@ type retireProjectIn struct {
 
 type emptyIn struct{}
 
-func addItemTools(s *sdk.Server, c *client.Client, actor string) {
-	sdk.AddTool(s, &sdk.Tool{Name: "create_item", Description: "Open an item; the actor becomes the reporter. A task must name located-in."},
+func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
+	sdk.AddTool(s, &sdk.Tool{Name: "create_item", Description: "Open an item; the actor becomes the reporter. A task must name located-in; the initiative names the ID's mint."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in createItemIn) (*sdk.CallToolResult, contract.Item, error) {
+			init := in.Initiative
+			if init == "" {
+				init = initiative
+			}
 			item, err := c.CreateItem(ctx, client.CreateItemRequest{
 				Actor: actor, Type: in.Type, Report: in.Report, Priority: in.Priority,
-				LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile,
+				Initiative: init, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile,
 			})
 			return nil, item, err
 		})
@@ -100,7 +123,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "edit_item", Description: "Change non-lifecycle properties; absent fields stay untouched."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in editItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			item, err := c.EditItem(ctx, client.EditItemRequest{
-				Actor: actor, ID: in.ID, Priority: in.Priority,
+				Actor: actor, ID: in.ID, Priority: in.Priority, Initiative: in.Initiative,
 				LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile, Lands: in.Lands,
 			})
 			return nil, item, err
@@ -163,10 +186,19 @@ func addItemTools(s *sdk.Server, c *client.Client, actor string) {
 			return nil, item, err
 		})
 
-	sdk.AddTool(s, &sdk.Tool{Name: "register_project", Description: "Add a project to the located-in vocabulary."},
+	sdk.AddTool(s, &sdk.Tool{Name: "register_project", Description: "Add a project to the located-in vocabulary, into an initiative."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in registerProjectIn) (*sdk.CallToolResult, contract.Project, error) {
 			p, err := c.RegisterProject(ctx, client.RegisterProjectRequest{
 				Actor: actor, Slug: in.Slug, Name: in.Name, Description: in.Description,
+				Initiative: in.Initiative,
+			})
+			return nil, p, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "assign_project", Description: "Move a project to an initiative — or backfill a pre-initiative registration."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in assignProjectIn) (*sdk.CallToolResult, contract.Project, error) {
+			p, err := c.AssignProject(ctx, client.AssignProjectRequest{
+				Actor: actor, Slug: in.Slug, Initiative: in.Initiative,
 			})
 			return nil, p, err
 		})
@@ -183,5 +215,27 @@ func addItemTools(s *sdk.Server, c *client.Client, actor string) {
 		func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyIn) (*sdk.CallToolResult, []contract.Project, error) {
 			ps, err := c.ListProjects(ctx)
 			return nil, ps, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "register_initiative", Description: "Add an initiative — a named group of projects — to the vocabulary."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in registerInitiativeIn) (*sdk.CallToolResult, contract.Initiative, error) {
+			i, err := c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+				Actor: actor, Slug: in.Slug, Name: in.Name, Description: in.Description,
+			})
+			return nil, i, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "retire_initiative", Description: "Retire an initiative: the slug leaves the vocabulary and is never reused; history stands."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in retireInitiativeIn) (*sdk.CallToolResult, contract.Initiative, error) {
+			i, err := c.RetireInitiative(ctx, client.RetireInitiativeRequest{
+				Actor: actor, Slug: in.Slug, Reason: in.Reason,
+			})
+			return nil, i, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "list_initiatives", Description: "Read the whole initiative vocabulary.", Annotations: readOnly},
+		func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyIn) (*sdk.CallToolResult, []contract.Initiative, error) {
+			is, err := c.ListInitiatives(ctx)
+			return nil, is, err
 		})
 }

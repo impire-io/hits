@@ -109,13 +109,13 @@ func TestSemanticRankingAndTombstone(t *testing.T) {
 	startSemantic(t, h, provider.URL)
 
 	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "the projector lags behind the ops log",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the projector lags behind the ops log",
 	})
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
 	b, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "billing invoice shows a wrong total",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "billing invoice shows a wrong total",
 	})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
@@ -162,13 +162,13 @@ func TestSemanticRebuildAndDegraded(t *testing.T) {
 	provider := fakeProvider(t)
 
 	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "database timeout on cold start",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "database timeout on cold start",
 	})
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
 	b, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "this report is unembeddable on purpose",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "this report is unembeddable on purpose",
 	})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
@@ -197,7 +197,7 @@ func TestSemanticChunkedTrail(t *testing.T) {
 	startSemantic(t, h, provider.URL)
 
 	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "orchestrator deadlock on shutdown",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "orchestrator deadlock on shutdown",
 	})
 	if err != nil {
 		t.Fatalf("create a: %v", err)

@@ -15,6 +15,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/cli"
 	"github.com/impire-io/hits/internal/index/graph"
@@ -47,6 +48,17 @@ func startStore(t *testing.T) *harness {
 		t.Fatalf("start node: %v", err)
 	}
 	t.Cleanup(func() { _ = svc.Stop() })
+
+	// Every create needs a live initiative for its mint (decision 0016):
+	// the harness registers the shared one and exports the filing default.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := client.New(svcConn).RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "hits", Name: "The HITS platform",
+	}); err != nil {
+		t.Fatalf("register initiative hits: %v", err)
+	}
+	t.Setenv("HITS_INITIATIVE", "hits")
 
 	return &harness{url: url, svcConn: svcConn}
 }
@@ -145,7 +157,7 @@ func TestItemLifecycle(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 
-	out := run(t, connect, "project", "register", "hits", "HITS repo")
+	out := run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	wantContains(t, out, "hits", "HITS repo")
 
 	out = run(t, connect, "create",
@@ -207,8 +219,8 @@ func TestProjectRetire(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 
-	run(t, connect, "project", "register", "001-hits", "HITS")
-	run(t, connect, "project", "register", "hits", "HITS repo")
+	run(t, connect, "project", "register", "001-hits", "HITS", "--initiative", "hits")
+	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "task", "--project", "001-hits", "cutover leftovers"))
 
 	out := run(t, connect, "project", "retire", "001-hits", "--reason", "setup validation artifact")
@@ -224,7 +236,7 @@ func TestProjectRetire(t *testing.T) {
 	if err := runErr(t, connect, "create", "--type", "task", "--project", "001-hits", "late reference"); !strings.Contains(err.Error(), "retired-project") {
 		t.Errorf("create against retired slug = %v, want retired-project", err)
 	}
-	if err := runErr(t, connect, "project", "register", "001-hits", "HITS again"); !strings.Contains(err.Error(), "slug-retired") {
+	if err := runErr(t, connect, "project", "register", "001-hits", "HITS again", "--initiative", "hits"); !strings.Contains(err.Error(), "slug-retired") {
 		t.Errorf("re-register retired slug = %v, want slug-retired", err)
 	}
 	if err := runErr(t, connect, "project", "retire", "001-hits", "--reason", "again"); !strings.Contains(err.Error(), "already-retired") {
@@ -461,7 +473,7 @@ func TestGraphCommand(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 
-	run(t, connect, "project", "register", "hits", "HITS repo")
+	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "--project", "hits", "graph fodder"))
 	run(t, connect, "claim", id)
 
@@ -538,4 +550,62 @@ func TestSemanticCommand(t *testing.T) {
 
 	out := run(t, connect, "semantic", "auth login loop", "--limit", "1")
 	wantContains(t, out, match)
+}
+
+// TestInitiativeCommands drives the initiative verbs: register, list,
+// select (verified against the live registry, stored as the filing
+// default), and create's flag → env → selected-default resolution
+// (decision 0016).
+func TestInitiativeCommands(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HITS_INITIATIVE", "") // fall through to the selected default
+
+	out := run(t, connect, "initiative", "register", "pra", "PRA effort", "--description", "a second effort")
+	wantContains(t, out, "pra", "PRA effort", "a second effort")
+
+	out = run(t, connect, "initiative", "list")
+	wantContains(t, out, "pra", "hits")
+
+	if err := runErr(t, connect, "initiative", "select", "nope"); !strings.Contains(err.Error(), "not a registered initiative") {
+		t.Errorf("select unknown: %v", err)
+	}
+	out = run(t, connect, "initiative", "select", "pra")
+	wantContains(t, out, "selected initiative: pra")
+
+	// The selected default feeds the mint; the flag outranks it.
+	id := itemID(t, run(t, connect, "create", "--type", "bug", "selected default works"))
+	if id != "pra-1" {
+		t.Errorf("selected-default mint = %q, want pra-1", id)
+	}
+	id = itemID(t, run(t, connect, "create", "--type", "bug", "--initiative", "hits", "the flag outranks"))
+	if id != "hits-1" {
+		t.Errorf("flag mint = %q, want hits-1", id)
+	}
+
+	// Selection is a filing default, not a read scope: a flagless search
+	// still reaches the whole corpus (asserted here without the index —
+	// get resolves both items).
+	wantContains(t, run(t, connect, "get", "pra-1"), "selected default works")
+	wantContains(t, run(t, connect, "get", "hits-1"), "the flag outranks")
+
+	out = run(t, connect, "initiative", "retire", "pra", "--reason", "wound down")
+	wantContains(t, out, "retired: wound down")
+	if err := runErr(t, connect, "create", "--type", "bug", "too late"); !strings.Contains(err.Error(), "retired-initiative") {
+		t.Errorf("create into retired initiative: %v", err)
+	}
+}
+
+// TestCreateRequiresInitiative: with no flag, no env, and no selected
+// default, the create fails before dialing.
+func TestCreateRequiresInitiative(t *testing.T) {
+	t.Setenv("HITS_ACTOR", "daan")
+	t.Setenv("HITS_INITIATIVE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	err := runErr(t, guardConnector(t), "create", "--type", "bug", "no initiative anywhere")
+	if !strings.Contains(err.Error(), "no initiative") {
+		t.Errorf("want the no-initiative refusal, got %v", err)
+	}
 }

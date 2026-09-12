@@ -35,8 +35,12 @@ func ContextConnector(contextName string) (*nats.Conn, error) {
 	return connect.Connect(contextName, "hits-mcp")
 }
 
-// defaultActor is indirected so Run's connect parameter keeps its name.
-var defaultActor = connect.DefaultActor
+// defaultActor and defaultInitiative are indirected so Run's connect
+// parameter keeps its name.
+var (
+	defaultActor      = connect.DefaultActor
+	defaultInitiative = connect.DefaultInitiative
+)
 
 // Run executes the server: parse flags, resolve and validate the actor,
 // connect and ping the fleet — all fail-fast — then serve MCP over stdio
@@ -46,6 +50,7 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 	fs.SetOutput(errOut)
 	ctxName := fs.String("context", "", "NATS context to connect with (default: the selected context)")
 	actorFlag := fs.String("actor", "", "acting handle stamped on every write (default: $HITS_ACTOR)")
+	initiativeFlag := fs.String("initiative", "", "filing default for create_item when the call names none (default: $HITS_INITIATIVE, else the selected initiative)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -67,6 +72,20 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 		return fmt.Errorf("actor %q is not a well-formed handle", actor)
 	}
 
+	// The default initiative is optional — a create_item naming its own
+	// initiative never needs it — but a given one must be well-formed. It
+	// is a filing default only, never a read scope (decision 0016).
+	initiative := *initiativeFlag
+	if initiative == "" {
+		initiative = os.Getenv("HITS_INITIATIVE")
+	}
+	if initiative == "" {
+		initiative = defaultInitiative()
+	}
+	if initiative != "" && !contract.ValidInitiativeSlug(initiative) {
+		return fmt.Errorf("initiative %q is not a well-formed initiative slug", initiative)
+	}
+
 	nc, err := connect(*ctxName)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -77,15 +96,17 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 		return fmt.Errorf("ping hits service: %w", err)
 	}
 
-	return NewServer(c, actor).Run(ctx, &sdk.StdioTransport{})
+	return NewServer(c, actor, initiative).Run(ctx, &sdk.StdioTransport{})
 }
 
-// NewServer builds the MCP server on an established client: the eighteen
-// tools of the design's table, one per client endpoint. Adding a client
-// endpoint means adding its tool here in the same change.
-func NewServer(c *client.Client, actor string) *sdk.Server {
+// NewServer builds the MCP server on an established client: the tools of
+// the design's table, one per client endpoint. Adding a client endpoint
+// means adding its tool here in the same change. initiative is the filing
+// default create_item falls back to; "" means every create must name its
+// own.
+func NewServer(c *client.Client, actor, initiative string) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: "hits", Version: version.Version}, nil)
-	addItemTools(s, c, actor)
+	addItemTools(s, c, actor, initiative)
 	addQueryTools(s, c)
 	return s
 }

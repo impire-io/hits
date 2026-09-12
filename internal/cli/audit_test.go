@@ -80,10 +80,10 @@ func TestAuditClean(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
-	repo.mergeWork(9, "1")
+	repo.mergeWork(9, "hits-1")
 	sha := repo.commit("a direct fix on main")
 
-	run(t, connect, "project", "register", "hits", "HITS repo")
+	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "the CLI panics"))
 	run(t, connect, "resolve", id, "--fixed-by", "pr:impire-io/hits#9 merged")
 	id = itemID(t, run(t, connect, "create", "--type", "task", "--project", "hits", "sync the docs"))
@@ -138,7 +138,7 @@ func TestAuditCommitUnmerged(t *testing.T) {
 	sha := repo.commit("never merged")
 	repo.git("checkout", "main")
 
-	run(t, connect, "project", "register", "hits", "HITS repo")
+	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "task", "--project", "hits", "sync the docs"))
 	run(t, connect, "resolve", id, "--fixed-by", "commit:"+sha+" claimed done")
 
@@ -181,12 +181,12 @@ func TestAuditMergedOpenAndUntracked(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
-	repo.mergeWork(5, "1")
-	repo.mergeWork(6, "42")
+	repo.mergeWork(5, "hits-1")
+	repo.mergeWork(6, "hits-42")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "still being worked"))
-	if id != "1" {
-		t.Fatalf("first item minted %q, want 1", id)
+	if id != "hits-1" {
+		t.Fatalf("first item minted %q, want hits-1", id)
 	}
 
 	out, err := auditOut(t, connect, "audit", "--repo", "hits="+repo.path)
@@ -194,8 +194,8 @@ func TestAuditMergedOpenAndUntracked(t *testing.T) {
 		t.Fatalf("want 2 failures, got err %v\n%s", err, out)
 	}
 	wantContains(t, out,
-		"merged-open", "item 1 is open",
-		"merged-untracked", "no live tracker item 42")
+		"merged-open", "item hits-1 is open",
+		"merged-untracked", "no live tracker item hits-42")
 }
 
 func TestAuditTombstonedSkippedButNotLive(t *testing.T) {
@@ -203,7 +203,7 @@ func TestAuditTombstonedSkippedButNotLive(t *testing.T) {
 	connect := h.connector()
 	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
-	repo.mergeWork(7, "1")
+	repo.mergeWork(7, "hits-1")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "filed by mistake"))
 	run(t, connect, "tombstone", id, "duplicate filing")
@@ -213,7 +213,7 @@ func TestAuditTombstonedSkippedButNotLive(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "1 failure(s)") {
 		t.Fatalf("want 1 failure, got err %v\n%s", err, out)
 	}
-	wantContains(t, out, "merged-untracked", "no live tracker item 1", "audited 2 items")
+	wantContains(t, out, "merged-untracked", "no live tracker item hits-1", "audited 2 items")
 }
 
 func TestAuditUnverifiableWarnsOnly(t *testing.T) {
@@ -223,7 +223,7 @@ func TestAuditUnverifiableWarnsOnly(t *testing.T) {
 	repo := newGitRepo(t, "impire-io/hits")
 	sha := repo.commit("somewhere")
 
-	run(t, connect, "project", "register", "other", "an unmapped repo")
+	run(t, connect, "project", "register", "other", "an unmapped repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "cross-repo symptom"))
 	run(t, connect, "resolve", id, "--fixed-by", "pr:impire-io/elsewhere#3 merged there")
 	id = itemID(t, run(t, connect, "create", "--type", "bug", "bare pr ref"))
@@ -281,7 +281,7 @@ func TestAuditJSON(t *testing.T) {
 		t.Fatalf("decode --json output: %v\n%s", err, out)
 	}
 	if len(reply.Findings) != 1 || reply.Findings[0].Kind != "pr-unmerged" ||
-		reply.Findings[0].Level != "fail" || reply.Findings[0].Item != "1" {
+		reply.Findings[0].Level != "fail" || reply.Findings[0].Item != "hits-1" {
 		t.Errorf("findings = %+v", reply.Findings)
 	}
 	if reply.Items != 1 || reply.Repos != 1 || reply.Failures != 1 || reply.Warnings != 0 {

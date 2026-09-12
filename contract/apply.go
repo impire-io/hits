@@ -28,6 +28,7 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 			Type:            p.Type,
 			Status:          Open,
 			Priority:        prio,
+			Initiative:      p.Initiative,
 			Report:          p.Report,
 			Reporter:        op.Actor,
 			Created:         op.At,
@@ -57,6 +58,9 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 		}
 		if p.Priority != nil {
 			it.Priority = *p.Priority
+		}
+		if p.Initiative != nil {
+			it.Initiative = *p.Initiative
 		}
 		if p.LocatedIn != nil {
 			it.LocatedIn = append([]string(nil), *p.LocatedIn...)
@@ -144,7 +148,19 @@ func ApplyProject(current *Project, op Op, seq uint64) (*Project, error) {
 		if err := decode(op, &p); err != nil {
 			return nil, err
 		}
-		return &Project{Slug: op.Entity, Name: p.Name, Description: p.Description, Seq: seq}, nil
+		return &Project{Slug: op.Entity, Name: p.Name, Description: p.Description, Initiative: p.Initiative, Seq: seq}, nil
+	case OpAssigned:
+		if current == nil {
+			return nil, fmt.Errorf("apply %s to project %s: no registration before assignment", op.Op, op.Entity)
+		}
+		var p AssignedPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		next := *current
+		next.Initiative = p.Initiative
+		next.Seq = seq
+		return &next, nil
 	case OpRetired:
 		if current == nil {
 			return nil, fmt.Errorf("apply %s to project %s: no registration before retirement", op.Op, op.Entity)
@@ -160,5 +176,36 @@ func ApplyProject(current *Project, op Op, seq uint64) (*Project, error) {
 		return &next, nil
 	default:
 		return nil, fmt.Errorf("apply: unknown project op %q", op.Op)
+	}
+}
+
+// ApplyInitiative folds one initiative op into a registry entry, with the
+// same idempotence rule as Apply.
+func ApplyInitiative(current *Initiative, op Op, seq uint64) (*Initiative, error) {
+	if current != nil && seq <= current.Seq {
+		return current, nil
+	}
+	switch op.Op {
+	case OpRegistered:
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		return &Initiative{Slug: op.Entity, Name: p.Name, Description: p.Description, Seq: seq}, nil
+	case OpRetired:
+		if current == nil {
+			return nil, fmt.Errorf("apply %s to initiative %s: no registration before retirement", op.Op, op.Entity)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		next := *current
+		next.Retired = true
+		next.RetireReason = p.Reason
+		next.Seq = seq
+		return &next, nil
+	default:
+		return nil, fmt.Errorf("apply: unknown initiative op %q", op.Op)
 	}
 }

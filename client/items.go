@@ -26,8 +26,13 @@ const (
 	NoteSubject            = "hits.api.note"
 	TombstoneSubject       = "hits.api.tombstone"
 	RegisterProjectSubject = "hits.api.project.register"
+	AssignProjectSubject   = "hits.api.project.assign"
 	RetireProjectSubject   = "hits.api.project.retire"
 	ListProjectsSubject    = "hits.api.project.list"
+
+	RegisterInitiativeSubject = "hits.api.initiative.register"
+	RetireInitiativeSubject   = "hits.api.initiative.retire"
+	ListInitiativesSubject    = "hits.api.initiative.list"
 )
 
 // APIError is a service-side rejection. Code is machine-legible: an
@@ -41,12 +46,14 @@ type APIError struct {
 func (e *APIError) Error() string { return e.Code + ": " + e.Message }
 
 // CreateItemRequest opens an item. The actor becomes the reporter; a task
-// must name located-in.
+// must name located-in; the initiative names the counter the ID mints
+// from (decision 0016).
 type CreateItemRequest struct {
 	Actor           string            `json:"actor"`
 	Type            contract.Type     `json:"type"`
 	Report          string            `json:"report"`
 	Priority        contract.Priority `json:"priority,omitempty"`
+	Initiative      string            `json:"initiative"`
 	LocatedIn       []string          `json:"located-in,omitempty"`
 	DiscoveredWhile string            `json:"discovered-while,omitempty"`
 }
@@ -57,11 +64,13 @@ type GetItemRequest struct {
 }
 
 // EditItemRequest changes properties outside the lifecycle; nil fields stay
-// untouched.
+// untouched. Initiative assigns a legacy bare-ID item to an initiative —
+// on prefixed items it is refused (decision 0016).
 type EditItemRequest struct {
 	Actor           string             `json:"actor"`
 	ID              string             `json:"id"`
 	Priority        *contract.Priority `json:"priority,omitempty"`
+	Initiative      *string            `json:"initiative,omitempty"`
 	LocatedIn       *[]string          `json:"located-in,omitempty"`
 	DiscoveredWhile *string            `json:"discovered-while,omitempty"`
 	Lands           *[]contract.Land   `json:"lands,omitempty"`
@@ -128,12 +137,41 @@ type TombstoneItemRequest struct {
 	Reason string `json:"reason"`
 }
 
-// RegisterProjectRequest adds one entry to the located-in vocabulary.
+// RegisterProjectRequest adds one entry to the located-in vocabulary,
+// naming the initiative it belongs to.
 type RegisterProjectRequest struct {
 	Actor       string `json:"actor"`
 	Slug        string `json:"slug"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	Initiative  string `json:"initiative"`
+}
+
+// AssignProjectRequest moves a project to an initiative — or backfills a
+// pre-0016 registration.
+type AssignProjectRequest struct {
+	Actor      string `json:"actor"`
+	Slug       string `json:"slug"`
+	Initiative string `json:"initiative"`
+}
+
+// RegisterInitiativeRequest adds one entry to the initiative vocabulary
+// (decision 0016). The slug may not end in an all-digit segment — the ID
+// parse rule depends on it.
+type RegisterInitiativeRequest struct {
+	Actor       string `json:"actor"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// RetireInitiativeRequest removes one entry from the initiative
+// vocabulary: listings drop the slug, new references are refused, history
+// stands, and the slug is never reused.
+type RetireInitiativeRequest struct {
+	Actor  string `json:"actor"`
+	Slug   string `json:"slug"`
+	Reason string `json:"reason"`
 }
 
 // RetireProjectRequest removes one entry from the located-in vocabulary:
@@ -216,9 +254,30 @@ func (c *Client) RetireProject(ctx context.Context, r RetireProjectRequest) (con
 	return request[contract.Project](ctx, c, RetireProjectSubject, r)
 }
 
+// AssignProject moves a project to an initiative.
+func (c *Client) AssignProject(ctx context.Context, r AssignProjectRequest) (contract.Project, error) {
+	return request[contract.Project](ctx, c, AssignProjectSubject, r)
+}
+
 // ListProjects reads the whole located-in vocabulary.
 func (c *Client) ListProjects(ctx context.Context) ([]contract.Project, error) {
 	return request[[]contract.Project](ctx, c, ListProjectsSubject, struct{}{})
+}
+
+// RegisterInitiative adds an initiative to the vocabulary.
+func (c *Client) RegisterInitiative(ctx context.Context, r RegisterInitiativeRequest) (contract.Initiative, error) {
+	return request[contract.Initiative](ctx, c, RegisterInitiativeSubject, r)
+}
+
+// RetireInitiative retires an initiative: the slug leaves the vocabulary
+// and is never reused; history stands.
+func (c *Client) RetireInitiative(ctx context.Context, r RetireInitiativeRequest) (contract.Initiative, error) {
+	return request[contract.Initiative](ctx, c, RetireInitiativeSubject, r)
+}
+
+// ListInitiatives reads the whole initiative vocabulary.
+func (c *Client) ListInitiatives(ctx context.Context) ([]contract.Initiative, error) {
+	return request[[]contract.Initiative](ctx, c, ListInitiativesSubject, struct{}{})
 }
 
 // request round-trips one endpoint call, surfacing service rejections as

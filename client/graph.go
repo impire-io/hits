@@ -11,23 +11,25 @@ const (
 // NodeKind classifies a graph node.
 type NodeKind string
 
-// The node kinds. Items and projects have identity in the system; actor
-// nodes exist only by reference.
+// The node kinds. Items, projects, and initiatives have identity in the
+// system; actor nodes exist only by reference.
 const (
-	NodeItem    NodeKind = "item"
-	NodeProject NodeKind = "project"
-	NodeActor   NodeKind = "actor"
+	NodeItem       NodeKind = "item"
+	NodeProject    NodeKind = "project"
+	NodeInitiative NodeKind = "initiative"
+	NodeActor      NodeKind = "actor"
 )
 
 // The graph's edge types: the assertable links plus the edges derived from
 // properties and ops (02-DESIGN/item-model.md § links).
 const (
-	EdgeDuplicates = "duplicates"
-	EdgeRelatesTo  = "relates-to"
-	EdgeLocatedIn  = "located-in"
-	EdgeReportedBy = "reported-by"
-	EdgeClaimedBy  = "claimed-by"
-	EdgeBlockedBy  = "blocked-by"
+	EdgeDuplicates   = "duplicates"
+	EdgeRelatesTo    = "relates-to"
+	EdgeLocatedIn    = "located-in"
+	EdgeReportedBy   = "reported-by"
+	EdgeClaimedBy    = "claimed-by"
+	EdgeBlockedBy    = "blocked-by"
+	EdgeInInitiative = "in-initiative"
 )
 
 // NodeRef identifies one node; Name is carried on project nodes only, from

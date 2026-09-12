@@ -5,10 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/connect"
 )
 
 // multiFlag collects a repeatable string flag.
@@ -25,6 +27,7 @@ func runCreate(inv *invocation) error {
 	fs := inv.flagSet("create", "create --type <bug|task|improvement> [flags] <report>")
 	typ := fs.String("type", "", "item type: bug, task, or improvement")
 	priority := fs.String("priority", "", "triage signal: high, normal, or low")
+	initiative := fs.String("initiative", "", "initiative the ID mints from (default: $HITS_INITIATIVE, else the selected initiative)")
 	var projects multiFlag
 	fs.Var(&projects, "project", "located-in project slug (repeatable)")
 	discovered := fs.String("discovered-while", "", "the context the item was noticed in")
@@ -39,6 +42,10 @@ func runCreate(inv *invocation) error {
 	if err != nil {
 		return err
 	}
+	init, err := initiativeOrErr(*initiative)
+	if err != nil {
+		return err
+	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -50,6 +57,7 @@ func runCreate(inv *invocation) error {
 		Type:            contract.Type(*typ),
 		Report:          fs.Arg(0),
 		Priority:        contract.Priority(*priority),
+		Initiative:      init,
 		LocatedIn:       projects,
 		DiscoveredWhile: *discovered,
 	})
@@ -57,6 +65,22 @@ func runCreate(inv *invocation) error {
 		return err
 	}
 	return inv.printItem(item)
+}
+
+// initiativeOrErr resolves the initiative a create mints from — the flag,
+// then $HITS_INITIATIVE, then the selected default (decision 0016). It
+// fails before anything touches the wire.
+func initiativeOrErr(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if i := os.Getenv("HITS_INITIATIVE"); i != "" {
+		return i, nil
+	}
+	if i := connect.DefaultInitiative(); i != "" {
+		return i, nil
+	}
+	return "", errors.New("no initiative: pass --initiative, set HITS_INITIATIVE, or run 'hits initiative select <slug>'")
 }
 
 func runGet(inv *invocation) error {
@@ -87,6 +111,7 @@ func runGet(inv *invocation) error {
 func runEdit(inv *invocation) error {
 	fs := inv.flagSet("edit", "edit <id> [flags]")
 	priority := fs.String("priority", "", "triage signal: high, normal, or low")
+	initiative := fs.String("initiative", "", "assign a legacy bare-ID item to an initiative")
 	var projects multiFlag
 	fs.Var(&projects, "project", "located-in project slug (repeatable, replaces the list)")
 	discovered := fs.String("discovered-while", "", "the context the item was noticed in (\"\" clears)")
@@ -113,6 +138,8 @@ func runEdit(inv *invocation) error {
 		case "priority":
 			p := contract.Priority(*priority)
 			req.Priority = &p
+		case "initiative":
+			req.Initiative = initiative
 		case "project":
 			locs := []string(projects)
 			req.LocatedIn = &locs

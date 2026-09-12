@@ -92,20 +92,25 @@ func TestStartRunsTheFleet(t *testing.T) {
 	if _, err := c.Ping(ctx); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
+	if _, err := c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "hits", Name: "The HITS platform",
+	}); err != nil {
+		t.Fatalf("register initiative: %v", err)
+	}
 	if _, err := c.RegisterProject(ctx, client.RegisterProjectRequest{
-		Actor: "daan", Slug: "hits", Name: "HITS repo",
+		Actor: "daan", Slug: "hits", Name: "HITS repo", Initiative: "hits",
 	}); err != nil {
 		t.Fatalf("register project: %v", err)
 	}
 	item, err := c.CreateItem(ctx, client.CreateItemRequest{
 		Actor: "daan", Type: "bug", Report: "auth login loop keeps repeating",
-		LocatedIn: []string{"hits"},
+		Initiative: "hits", LocatedIn: []string{"hits"},
 	})
 	if err != nil {
 		t.Fatalf("create item: %v", err)
 	}
 	if _, err := c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: "bug", Report: "the build cache misses every time",
+		Actor: "daan", Type: "bug", Report: "the build cache misses every time", Initiative: "hits",
 	}); err != nil {
 		t.Fatalf("create second item: %v", err)
 	}

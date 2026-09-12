@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -67,7 +68,7 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	if pending == 0 {
 		close(ready)
 	}
-	items := map[string]*contract.Item{}
+	state := &foldState{items: map[string]*contract.Item{}, projects: map[string]*contract.Project{}}
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
 		md, err := msg.Metadata()
 		if err != nil {
@@ -79,7 +80,7 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 			log.Printf("hits-graph: decode op at seq %d: %v", md.Sequence.Stream, err)
 			return
 		}
-		fold(st, items, op, md.Sequence.Stream)
+		fold(st, state, msg.Subject(), op, md.Sequence.Stream)
 		if pending > 0 {
 			pending--
 			if pending == 0 {
@@ -131,29 +132,52 @@ func Start(ctx context.Context, nc *nats.Conn) (*Service, error) {
 	return &Service{micro: svc, cons: cc, st: st}, nil
 }
 
+// foldState is the fold's working memory: item snapshots and the project
+// registry — folded here so a project's in-initiative edge follows
+// registrations and assignments alike.
+type foldState struct {
+	items    map[string]*contract.Item
+	projects map[string]*contract.Project
+}
+
 // fold applies one op and set-replaces the touched node's edges from its
-// fresh snapshot — no incremental edge bookkeeping to drift.
-func fold(st store, items map[string]*contract.Item, op contract.Op, seq uint64) {
-	if op.Op == contract.OpRegistered {
-		var p contract.RegisteredPayload
-		if err := json.Unmarshal(op.Payload, &p); err != nil {
-			log.Printf("hits-graph: decode registration for %s: %v", op.Entity, err)
-			return
+// fresh snapshot — no incremental edge bookkeeping to drift. Routing is
+// by subject kind (02-DESIGN/ops-log.md § subjects): registered and
+// retired mean different registries on different subjects.
+func fold(st store, state *foldState, subject string, op contract.Op, seq uint64) {
+	switch {
+	case strings.HasPrefix(subject, contract.InitiativeOpsPrefix):
+		if op.Op == contract.OpRegistered {
+			var p contract.RegisteredPayload
+			if err := json.Unmarshal(op.Payload, &p); err != nil {
+				log.Printf("hits-graph: decode registration for initiative %s: %v", op.Entity, err)
+				return
+			}
+			st.setName(nodeKey{kind: client.NodeInitiative, id: op.Entity}, p.Name)
 		}
-		st.setName(nodeKey{kind: client.NodeProject, id: op.Entity}, p.Name)
-		return
-	}
-	if op.Op == contract.OpRetired {
-		// A retired project's node materializes only through item edges, so
+		// A retired initiative's node materializes only through edges, so
 		// there is nothing to remove; the name mapping stays for history.
 		return
+	case strings.HasPrefix(subject, contract.ProjectOpsPrefix):
+		next, err := contract.ApplyProject(state.projects[op.Entity], op, seq)
+		if err != nil {
+			log.Printf("hits-graph: fold %s op on project %s: %v", op.Op, op.Entity, err)
+			return
+		}
+		state.projects[op.Entity] = next
+		st.setName(nodeKey{kind: client.NodeProject, id: op.Entity}, next.Name)
+		key := nodeKey{kind: client.NodeProject, id: op.Entity}
+		if next.Initiative != "" {
+			st.setEdges(key, []edge{{typ: client.EdgeInInitiative, to: nodeKey{kind: client.NodeInitiative, id: next.Initiative}}})
+		}
+		return
 	}
-	next, err := contract.Apply(items[op.Entity], op, seq)
+	next, err := contract.Apply(state.items[op.Entity], op, seq)
 	if err != nil {
 		log.Printf("hits-graph: fold %s op on item %s: %v", op.Op, op.Entity, err)
 		return
 	}
-	items[op.Entity] = next
+	state.items[op.Entity] = next
 	key := nodeKey{kind: client.NodeItem, id: next.ID}
 	if next.Tombstoned {
 		st.removeNode(key)
@@ -165,12 +189,15 @@ func fold(st store, items map[string]*contract.Item, op contract.Op, seq uint64)
 // deriveEdges is the graph contract: the asserted links plus the derived
 // edges of 02-DESIGN/item-model.md § links.
 func deriveEdges(it *contract.Item) []edge {
-	edges := make([]edge, 0, len(it.Links)+len(it.LocatedIn)+3)
+	edges := make([]edge, 0, len(it.Links)+len(it.LocatedIn)+4)
 	for _, l := range it.Links {
 		edges = append(edges, edge{typ: string(l.Type), to: nodeKey{kind: client.NodeItem, id: l.To}})
 	}
 	for _, slug := range it.LocatedIn {
 		edges = append(edges, edge{typ: client.EdgeLocatedIn, to: nodeKey{kind: client.NodeProject, id: slug}})
+	}
+	if it.Initiative != "" {
+		edges = append(edges, edge{typ: client.EdgeInInitiative, to: nodeKey{kind: client.NodeInitiative, id: it.Initiative}})
 	}
 	edges = append(edges, edge{typ: client.EdgeReportedBy, to: nodeKey{kind: client.NodeActor, id: it.Reporter}})
 	if it.Claim != nil {
@@ -182,18 +209,12 @@ func deriveEdges(it *contract.Item) []edge {
 	return edges
 }
 
-// isItemID reports whether s is exactly an item ID — all digits. Prose
-// blockers derive no edge.
+// isItemID reports whether s has the shape of an item ID — bare digits or
+// the initiative-prefixed form (decision 0016). Prose blockers derive no
+// edge.
 func isItemID(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	_, ok := contract.ParseItemID(s)
+	return ok
 }
 
 func neighborsHandler(st store) func(micro.Request) {

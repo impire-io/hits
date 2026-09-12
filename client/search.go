@@ -12,11 +12,12 @@ const SearchSubject = "hits.search.query"
 // SearchRequest queries the full-text index over reports and notes. Every
 // field is optional; an empty request matches everything, paged.
 type SearchRequest struct {
-	Query  string          `json:"query,omitempty"`
-	Type   contract.Type   `json:"type,omitempty"`
-	Status contract.Status `json:"status,omitempty"`
-	Limit  int             `json:"limit,omitempty"`  // default 10, capped at 100
-	Offset int             `json:"offset,omitempty"` // for paging
+	Query      string          `json:"query,omitempty"`
+	Type       contract.Type   `json:"type,omitempty"`
+	Status     contract.Status `json:"status,omitempty"`
+	Initiative string          `json:"initiative,omitempty"`
+	Limit      int             `json:"limit,omitempty"`  // default 10, capped at 100
+	Offset     int             `json:"offset,omitempty"` // for paging
 }
 
 // SearchHit is one match: an item ID and its relevance score. State comes

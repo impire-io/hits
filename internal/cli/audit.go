@@ -20,9 +20,10 @@ import (
 // its item open. Contradictions fail the command; refs the mapping cannot
 // check only warn.
 func runAudit(inv *invocation) error {
-	fs := inv.flagSet("audit", "audit --repo <slug>=<path> [--repo ...] [--fan <n>]")
+	fs := inv.flagSet("audit", "audit --repo <slug>=<path> [--repo ...] [--initiative <i>] [--fan <n>]")
 	var mappings multiFlag
 	fs.Var(&mappings, "repo", "project slug and its local clone, <slug>=<path> (repeatable)")
+	initiative := fs.String("initiative", "", "narrow the tracker side to one initiative")
 	fan := fs.Int("fan", defaultFan, "concurrent item gets during the corpus walk")
 	if err := fs.Parse(inv.args); err != nil {
 		return err
@@ -70,13 +71,13 @@ func runAudit(inv *invocation) error {
 		return err
 	}
 	defer closeConn()
-	items, err := walkItems(inv.ctx, c, *fan)
+	items, err := walkCorpus(inv.ctx, c, *fan)
 	if err != nil {
 		return err
 	}
 
-	findings := auditRefs(items, repos)
-	findings = append(findings, auditMerges(items, repos)...)
+	findings := auditRefs(items, repos, *initiative)
+	findings = append(findings, auditMerges(items, repos, *initiative)...)
 	return inv.printAudit(findings, len(items), len(repos))
 }
 
@@ -143,12 +144,41 @@ func repoIdentity(url string) string {
 	return owner + "/" + repo
 }
 
-// walkItems reads the whole corpus: IDs are server-minted dense integers,
-// so the walk from 1 to the first not-found is complete by construction,
-// and no index is consulted. Gets fan out a window of fan at a time so
-// the wire round-trips overlap; density means everything past the first
-// gap is noise, so errors beyond it are discarded with it.
-func walkItems(ctx context.Context, c *client.Client, fan int) ([]contract.Item, error) {
+// walkCorpus enumerates the whole tracker: the legacy bare range plus
+// every live initiative's range — dense sequences all, each walked to
+// its first gap, no index consulted (decision 0016).
+func walkCorpus(ctx context.Context, c *client.Client, fan int) ([]contract.Item, error) {
+	items, err := walkItems(ctx, c, fan, "")
+	if err != nil {
+		return nil, err
+	}
+	initiatives, err := c.ListInitiatives(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list initiatives: %w", err)
+	}
+	sort.Slice(initiatives, func(a, b int) bool { return initiatives[a].Slug < initiatives[b].Slug })
+	for _, i := range initiatives {
+		more, err := walkItems(ctx, c, fan, i.Slug)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, more...)
+	}
+	return items, nil
+}
+
+// walkItems reads one dense range — the legacy bare IDs when prefix is
+// empty, else <prefix>-1 onward — until its first not-found. Gets fan
+// out a window of fan at a time so the wire round-trips overlap;
+// density means everything past the first gap is noise, so errors
+// beyond it are discarded with it.
+func walkItems(ctx context.Context, c *client.Client, fan int, prefix string) ([]contract.Item, error) {
+	id := func(n int) string {
+		if prefix == "" {
+			return strconv.Itoa(n)
+		}
+		return prefix + "-" + strconv.Itoa(n)
+	}
 	var items []contract.Item
 	for base := 1; ; base += fan {
 		batch := make([]*contract.Item, fan)
@@ -158,15 +188,15 @@ func walkItems(ctx context.Context, c *client.Client, fan int) ([]contract.Item,
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				it, err := c.GetItem(ctx, strconv.Itoa(base+i))
+				it, err := c.GetItem(ctx, id(base+i))
 				var apiErr *client.APIError
 				switch {
 				case err == nil:
 					batch[i] = &it
 				case errors.As(err, &apiErr) && apiErr.Code == "not-found":
-					// the end of the corpus falls in this window
+					// the end of the range falls in this window
 				default:
-					errs[i] = fmt.Errorf("get %d: %w", base+i, err)
+					errs[i] = fmt.Errorf("get %s: %w", id(base+i), err)
 				}
 			}()
 		}
@@ -196,12 +226,16 @@ type finding struct {
 }
 
 // auditRefs verifies resolved items' pr: and commit: refs against the
-// mapped clones. action: refs carry their evidence in the note and are no
+// mapped clones; a non-empty initiative narrows to that initiative's
+// items. action: refs carry their evidence in the note and are no
 // business of git's.
-func auditRefs(items []contract.Item, repos map[string]*repoEvidence) []finding {
+func auditRefs(items []contract.Item, repos map[string]*repoEvidence, initiative string) []finding {
 	findings := []finding{}
 	for _, it := range items {
 		if it.Tombstoned || it.Status != contract.Resolved {
+			continue
+		}
+		if initiative != "" && it.Initiative != initiative {
 			continue
 		}
 		for _, ref := range it.FixedBy {
@@ -303,14 +337,16 @@ func isAncestor(path, sha, mainRef string) bool {
 	return exec.Command("git", "-C", path, "merge-base", "--is-ancestor", sha, mainRef).Run() == nil
 }
 
-// mergeSubject is a GitHub merge commit from a bare-integer branch — the
-// post-cutover naming rule makes that integer a work ID. Squash merges
+// mergeSubject is a GitHub merge commit and its branch tail; a tail that
+// parses as an item ID — bare-integer (the post-cutover naming rule) or
+// initiative-prefixed (decision 0016) — names a work ID. Squash merges
 // carry no branch name, so they cannot appear here.
-var mergeSubject = regexp.MustCompile(`^Merge pull request #\d+ from [^/ ]+/(\d+)$`)
+var mergeSubject = regexp.MustCompile(`^Merge pull request #\d+ from [^/ ]+/(.+)$`)
 
 // auditMerges flags merged work IDs whose item is missing, tombstoned, or
-// not terminal: merged work must not leave its record open.
-func auditMerges(items []contract.Item, repos map[string]*repoEvidence) []finding {
+// not terminal: merged work must not leave its record open. A non-empty
+// initiative narrows to work IDs of that initiative.
+func auditMerges(items []contract.Item, repos map[string]*repoEvidence, initiative string) []finding {
 	byID := make(map[string]contract.Item, len(items))
 	for _, it := range items {
 		byID[it.ID] = it
@@ -329,6 +365,13 @@ func auditMerges(items []contract.Item, repos map[string]*repoEvidence) []findin
 				continue
 			}
 			id := m[1]
+			idInitiative, ok := contract.ParseItemID(id)
+			if !ok {
+				continue // a named branch, not a work ID
+			}
+			if initiative != "" && idInitiative != initiative {
+				continue
+			}
 			it, ok := byID[id]
 			switch {
 			case !ok || it.Tombstoned:

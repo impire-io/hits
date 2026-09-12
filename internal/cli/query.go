@@ -15,6 +15,7 @@ func runSearch(inv *invocation) error {
 	fs := inv.flagSet("search", "search [<query>] [flags]")
 	typ := fs.String("type", "", "filter by item type")
 	status := fs.String("status", "", "filter by status")
+	initiative := fs.String("initiative", "", "filter by initiative")
 	limit := fs.Int("limit", 0, "page size (service default 10, capped at 100)")
 	offset := fs.Int("offset", 0, "page start")
 	var columns multiFlag
@@ -46,11 +47,12 @@ func runSearch(inv *invocation) error {
 	}
 	defer closeConn()
 	reply, err := c.SearchItems(inv.ctx, client.SearchRequest{
-		Query:  query,
-		Type:   contract.Type(*typ),
-		Status: contract.Status(*status),
-		Limit:  *limit,
-		Offset: *offset,
+		Query:      query,
+		Type:       contract.Type(*typ),
+		Status:     contract.Status(*status),
+		Initiative: *initiative,
+		Limit:      *limit,
+		Offset:     *offset,
 	})
 	if err != nil {
 		return err

@@ -44,7 +44,7 @@ func wantInvariant(t *testing.T, err error, name string) {
 func newBug(t *testing.T) *contract.Item {
 	t.Helper()
 	return step(t, nil, mkOp(t, contract.OpCreated, "1", "daan", contract.CreatedPayload{
-		Type: contract.Bug, Report: "the projector lags",
+		Type: contract.Bug, Report: "the projector lags", Initiative: "hits",
 	}), 1)
 }
 
@@ -65,11 +65,13 @@ func TestCreateInvariants(t *testing.T) {
 		actor   string
 		want    string
 	}{
-		{"bad actor", contract.CreatedPayload{Type: contract.Bug, Report: "x"}, "Daan", "invalid-actor"},
-		{"bad type", contract.CreatedPayload{Type: "epic", Report: "x"}, "daan", "invalid-type"},
-		{"no report", contract.CreatedPayload{Type: contract.Bug}, "daan", "empty-report"},
-		{"task without location", contract.CreatedPayload{Type: contract.Task, Report: "x"}, "daan", "task-requires-location"},
-		{"bad slug", contract.CreatedPayload{Type: contract.Task, Report: "x", LocatedIn: []string{"Bad Slug"}}, "daan", "invalid-slug"},
+		{"bad actor", contract.CreatedPayload{Type: contract.Bug, Report: "x", Initiative: "hits"}, "Daan", "invalid-actor"},
+		{"bad type", contract.CreatedPayload{Type: "epic", Report: "x", Initiative: "hits"}, "daan", "invalid-type"},
+		{"no report", contract.CreatedPayload{Type: contract.Bug, Initiative: "hits"}, "daan", "empty-report"},
+		{"no initiative", contract.CreatedPayload{Type: contract.Bug, Report: "x"}, "daan", "initiative-required"},
+		{"bad initiative", contract.CreatedPayload{Type: contract.Bug, Report: "x", Initiative: "team-42"}, "daan", "invalid-initiative"},
+		{"task without location", contract.CreatedPayload{Type: contract.Task, Report: "x", Initiative: "hits"}, "daan", "task-requires-location"},
+		{"bad slug", contract.CreatedPayload{Type: contract.Task, Report: "x", Initiative: "hits", LocatedIn: []string{"Bad Slug"}}, "daan", "invalid-slug"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,8 +123,8 @@ func TestTextBudgets(t *testing.T) {
 		op      contract.OpType
 		payload any
 	}{
-		{"report", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: body}},
-		{"discovered-while", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: "x", DiscoveredWhile: label}},
+		{"report", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: body, Initiative: "hits"}},
+		{"discovered-while", contract.OpCreated, contract.CreatedPayload{Type: contract.Bug, Report: "x", Initiative: "hits", DiscoveredWhile: label}},
 		{"note text", contract.OpNoted, contract.NotedPayload{Text: body}},
 		{"edited discovered-while", contract.OpEdited, contract.EditedPayload{DiscoveredWhile: &label}},
 		{"lands pr", contract.OpEdited, contract.EditedPayload{Lands: &[]contract.Land{{Repo: "hits", PR: label, After: []string{}}}}},
@@ -150,7 +152,7 @@ func TestTextBudgets(t *testing.T) {
 	}
 
 	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
-		contract.RegisteredPayload{Name: "HITS", Description: label})), "over-budget")
+		contract.RegisteredPayload{Name: "HITS", Description: label, Initiative: "hits"})), "over-budget")
 	wantInvariant(t, contract.CheckProjectOp(&contract.Project{Slug: "hits", Name: "HITS", Seq: 1},
 		mkOp(t, contract.OpRetired, "hits", "daan", contract.RetiredPayload{Reason: label})), "over-budget")
 
@@ -173,7 +175,7 @@ func TestTransitionTable(t *testing.T) {
 		contract.TransitionedPayload{To: contract.Diagnosing, FixedBy: []contract.FixRef{{Commit: "x"}}})), "refs-only-on-close")
 
 	task := step(t, nil, mkOp(t, contract.OpCreated, "2", "daan", contract.CreatedPayload{
-		Type: contract.Task, Report: "sync the docs", LocatedIn: []string{"hits"},
+		Type: contract.Task, Report: "sync the docs", Initiative: "hits", LocatedIn: []string{"hits"},
 	}), 1)
 	wantInvariant(t, contract.CheckOp(task, mkOp(t, contract.OpTransitioned, "2", "daan",
 		contract.TransitionedPayload{To: contract.Diagnosing})), "illegal-transition")
@@ -269,7 +271,7 @@ func TestApplyDoesNotMutateCurrent(t *testing.T) {
 }
 
 func TestProjects(t *testing.T) {
-	reg := mkOp(t, contract.OpRegistered, "hits", "daan", contract.RegisteredPayload{Name: "HITS product repo"})
+	reg := mkOp(t, contract.OpRegistered, "hits", "daan", contract.RegisteredPayload{Name: "HITS product repo", Initiative: "hits"})
 	if err := contract.CheckProjectOp(nil, reg); err != nil {
 		t.Fatalf("check register: %v", err)
 	}
@@ -282,13 +284,15 @@ func TestProjects(t *testing.T) {
 	}
 	wantInvariant(t, contract.CheckProjectOp(p, reg), "already-registered")
 	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "Bad Slug", "daan",
-		contract.RegisteredPayload{Name: "x"})), "invalid-slug")
+		contract.RegisteredPayload{Name: "x", Initiative: "hits"})), "invalid-slug")
 	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
-		contract.RegisteredPayload{})), "empty-name")
+		contract.RegisteredPayload{Initiative: "hits"})), "empty-name")
+	wantInvariant(t, contract.CheckProjectOp(nil, mkOp(t, contract.OpRegistered, "hits", "daan",
+		contract.RegisteredPayload{Name: "x"})), "initiative-required")
 }
 
 func TestProjectRetirement(t *testing.T) {
-	reg := mkOp(t, contract.OpRegistered, "hits", "daan", contract.RegisteredPayload{Name: "HITS product repo"})
+	reg := mkOp(t, contract.OpRegistered, "hits", "daan", contract.RegisteredPayload{Name: "HITS product repo", Initiative: "hits"})
 	p, err := contract.ApplyProject(nil, reg, 1)
 	if err != nil {
 		t.Fatalf("apply register: %v", err)

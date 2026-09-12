@@ -49,6 +49,16 @@ func startStore(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { _ = svc.Stop() })
 
+	// Every create needs a live initiative for its mint (decision 0016);
+	// the harness registers the one the sessions default to.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := client.New(svcConn).RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "hits", Name: "The HITS platform",
+	}); err != nil {
+		t.Fatalf("register initiative hits: %v", err)
+	}
+
 	return &harness{url: url, svcConn: svcConn}
 }
 
@@ -62,7 +72,7 @@ func session(t *testing.T, h *harness, actor string) *sdk.ClientSession {
 	}
 	t.Cleanup(nc.Close)
 
-	srv := mcp.NewServer(client.New(nc), actor)
+	srv := mcp.NewServer(client.New(nc), actor, "hits")
 	st, ct := sdk.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := srv.Connect(ctx, st, nil); err != nil {
@@ -148,11 +158,13 @@ func TestToolList(t *testing.T) {
 	}
 
 	want := []string{
-		"block_item", "claim_item", "create_item", "edit_item", "get_item",
-		"graph_neighbors", "graph_walk", "link_items", "list_projects",
-		"note_item", "register_project", "release_item", "retire_project",
-		"search_items", "semantic_search", "tombstone_item",
-		"transition_item", "unblock_item", "unlink_items",
+		"assign_project", "block_item", "claim_item", "create_item",
+		"edit_item", "get_item", "graph_neighbors", "graph_walk",
+		"link_items", "list_initiatives", "list_projects", "note_item",
+		"register_initiative", "register_project", "release_item",
+		"retire_initiative", "retire_project", "search_items",
+		"semantic_search", "tombstone_item", "transition_item",
+		"unblock_item", "unlink_items",
 	}
 	var got []string
 	readOnly := map[string]bool{}
@@ -165,7 +177,7 @@ func TestToolList(t *testing.T) {
 		t.Errorf("tool list = %v, want %v", got, want)
 	}
 
-	wantReadOnly := []string{"get_item", "graph_neighbors", "graph_walk", "list_projects", "search_items", "semantic_search"}
+	wantReadOnly := []string{"get_item", "graph_neighbors", "graph_walk", "list_initiatives", "list_projects", "search_items", "semantic_search"}
 	for _, name := range want {
 		if wantRO := slices.Contains(wantReadOnly, name); readOnly[name] != wantRO {
 			t.Errorf("tool %s read-only = %v, want %v", name, readOnly[name], wantRO)
@@ -179,7 +191,7 @@ func TestItemLifecycleTools(t *testing.T) {
 	h := startStore(t)
 	cs := session(t, h, "daan")
 
-	res := call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo"})
+	res := call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo", "initiative": "hits"})
 	if res.IsError {
 		t.Fatalf("register_project: %s", resultText(res))
 	}
@@ -279,7 +291,7 @@ func TestRetireProjectTool(t *testing.T) {
 	h := startStore(t)
 	cs := session(t, h, "daan")
 
-	res := call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS"})
+	res := call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS", "initiative": "hits"})
 	if res.IsError {
 		t.Fatalf("register_project: %s", resultText(res))
 	}
@@ -300,7 +312,7 @@ func TestRetireProjectTool(t *testing.T) {
 		t.Errorf("projects = %+v, want the retired slug dropped", ps)
 	}
 
-	res = call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS again"})
+	res = call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS again", "initiative": "hits"})
 	if !res.IsError || !strings.Contains(resultText(res), "slug-retired") {
 		t.Errorf("re-register retired slug = %v %q, want slug-retired", res.IsError, resultText(res))
 	}
@@ -376,7 +388,7 @@ func TestQueryTools(t *testing.T) {
 	h := startStore(t)
 	cs := session(t, h, "daan")
 
-	call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo"})
+	call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo", "initiative": "hits"})
 	match := callItem(t, cs, "create_item", map[string]any{
 		"type": "bug", "report": "auth login loop keeps repeating", "located-in": []string{"hits"},
 	}).ID
@@ -486,5 +498,60 @@ func TestRunFailsFast(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "ping") {
 		t.Errorf("no fleet: err = %v, want the failed ping named", err)
+	}
+}
+
+// TestInitiativeTools rounds the four 0016 tools over the wire: register
+// and list initiatives, assign a project, retire — and create_item
+// honoring the server's startup default initiative.
+func TestInitiativeTools(t *testing.T) {
+	h := startStore(t)
+	cs := session(t, h, "daan")
+
+	res := call(t, cs, "register_initiative", map[string]any{"slug": "pra", "name": "PRA"})
+	if res.IsError {
+		t.Fatalf("register_initiative: %s", resultText(res))
+	}
+	if i := decode[contract.Initiative](t, res); i.Slug != "pra" || i.Name != "PRA" {
+		t.Errorf("registered initiative = %+v", i)
+	}
+
+	res = call(t, cs, "list_initiatives", map[string]any{})
+	if res.IsError {
+		t.Fatalf("list_initiatives: %s", resultText(res))
+	}
+	if is := decode[[]contract.Initiative](t, res); len(is) != 2 {
+		t.Errorf("initiative list = %+v, want hits and pra", is)
+	}
+
+	// The startup default feeds a create that names no initiative; an
+	// explicit one outranks it.
+	item := callItem(t, cs, "create_item", map[string]any{"type": "bug", "report": "default initiative"})
+	if item.ID != "hits-1" || item.Initiative != "hits" {
+		t.Errorf("default-initiative item = %s (%s)", item.ID, item.Initiative)
+	}
+	item = callItem(t, cs, "create_item", map[string]any{"type": "bug", "report": "explicit", "initiative": "pra"})
+	if item.ID != "pra-1" {
+		t.Errorf("explicit-initiative item = %s", item.ID)
+	}
+
+	res = call(t, cs, "register_project", map[string]any{"slug": "pra-c1c", "name": "PRA repo", "initiative": "pra"})
+	if res.IsError {
+		t.Fatalf("register_project: %s", resultText(res))
+	}
+	res = call(t, cs, "assign_project", map[string]any{"slug": "pra-c1c", "initiative": "hits"})
+	if res.IsError {
+		t.Fatalf("assign_project: %s", resultText(res))
+	}
+	if p := decode[contract.Project](t, res); p.Initiative != "hits" {
+		t.Errorf("assigned project = %+v", p)
+	}
+
+	res = call(t, cs, "retire_initiative", map[string]any{"slug": "pra", "reason": "wound down"})
+	if res.IsError {
+		t.Fatalf("retire_initiative: %s", resultText(res))
+	}
+	if i := decode[contract.Initiative](t, res); !i.Retired {
+		t.Errorf("retired initiative = %+v", i)
 	}
 }
