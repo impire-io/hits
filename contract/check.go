@@ -223,12 +223,16 @@ func checkCreated(op Op) error {
 }
 
 func checkEdited(current *Item, op Op) error {
-	if current.Status.Terminal() {
-		return inv("terminal-status", "item %s is %s; closed items accept notes and links only", current.ID, current.Status)
-	}
 	var p EditedPayload
 	if err := decode(op, &p); err != nil {
 		return err
+	}
+	// A closed item is history, and history still gets its memory kept:
+	// notes, links — and the one-time legacy initiative assignment
+	// (decision 0016's backfill), which reopens nothing. Every other edit
+	// stays refused on terminal items.
+	if current.Status.Terminal() && !initiativeOnlyEdit(p) {
+		return inv("terminal-status", "item %s is %s; closed items accept notes, links, and the legacy initiative assignment only", current.ID, current.Status)
 	}
 	if p.Priority != nil && !validPriority(*p.Priority) {
 		return inv("invalid-priority", "priority %q is not high, normal or low", *p.Priority)
@@ -253,6 +257,17 @@ func checkEdited(current *Item, op Op) error {
 			return err
 		}
 	}
+	return checkEditedLands(p)
+}
+
+// initiativeOnlyEdit reports whether the edit carries the initiative and
+// nothing else — the one edit a terminal item accepts.
+func initiativeOnlyEdit(p EditedPayload) bool {
+	return p.Initiative != nil && p.Priority == nil && p.LocatedIn == nil &&
+		p.DiscoveredWhile == nil && p.Lands == nil
+}
+
+func checkEditedLands(p EditedPayload) error {
 	if p.Lands != nil {
 		for _, l := range *p.Lands {
 			if err := overBudget("lands repo", l.Repo, MaxLabelBytes); err != nil {
