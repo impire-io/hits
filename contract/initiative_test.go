@@ -159,3 +159,33 @@ func TestItemInitiativeAssignment(t *testing.T) {
 	wantInvariant(t, contract.CheckOp(prefixed, mkOp(t, contract.OpEdited, "hits-1", "daan",
 		contract.EditedPayload{Initiative: &init})), "initiative-immutable")
 }
+
+// TestTerminalItemsAcceptTheBackfill: a closed legacy item still takes
+// its one-time initiative assignment — the 0016 backfill touches history
+// the way notes and links do — while every other edit stays refused.
+func TestTerminalItemsAcceptTheBackfill(t *testing.T) {
+	it := newBug(t)
+	it = step(t, it, mkOp(t, contract.OpTransitioned, "1", "daan", contract.TransitionedPayload{
+		To: contract.Resolved, Closed: "2026-09-12", FixedBy: []contract.FixRef{{Commit: "abc"}},
+	}), 2)
+
+	init := "hits"
+	assign := mkOp(t, contract.OpEdited, "1", "daan", contract.EditedPayload{Initiative: &init})
+	if err := contract.CheckOp(it, assign); err != nil {
+		t.Fatalf("initiative-only edit on a closed item: %v", err)
+	}
+	after, err := contract.Apply(it, assign, 3)
+	if err != nil {
+		t.Fatalf("apply assignment: %v", err)
+	}
+	if after.Initiative != "hits" || after.Status != contract.Resolved {
+		t.Fatalf("assigned closed item = %+v", after)
+	}
+
+	// Anything beyond the assignment still bounces off terminal.
+	prio := contract.High
+	wantInvariant(t, contract.CheckOp(it, mkOp(t, contract.OpEdited, "1", "daan",
+		contract.EditedPayload{Initiative: &init, Priority: &prio})), "terminal-status")
+	wantInvariant(t, contract.CheckOp(it, mkOp(t, contract.OpEdited, "1", "daan",
+		contract.EditedPayload{Priority: &prio})), "terminal-status")
+}
