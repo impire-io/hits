@@ -66,6 +66,7 @@ func (h *handlers) create(req micro.Request) {
 		Type:            r.Type,
 		Report:          r.Report,
 		Priority:        r.Priority,
+		Initiative:      r.Initiative,
 		LocatedIn:       r.LocatedIn,
 		DiscoveredWhile: r.DiscoveredWhile,
 	})
@@ -73,16 +74,21 @@ func (h *handlers) create(req micro.Request) {
 		h.fail(req, err)
 		return
 	}
-	// Validate before minting so a rejected create burns no ID.
+	// Validate before minting so a rejected create burns no number —
+	// the initiative check included, since the mint needs it.
 	if err := contract.CheckOp(nil, op); err != nil {
 		h.fail(req, err)
 		return
 	}
-	if err := h.st.checkRegistered(ctx, r.LocatedIn); err != nil {
+	if err := h.st.checkInitiativeLive(ctx, r.Initiative); err != nil {
 		h.fail(req, err)
 		return
 	}
-	id, err := h.st.mintID(ctx)
+	if err := h.st.checkRegistered(ctx, r.LocatedIn, r.Initiative); err != nil {
+		h.fail(req, err)
+		return
+	}
+	id, err := h.st.mintID(ctx, r.Initiative)
 	if err != nil {
 		h.fail(req, err)
 		return
@@ -124,8 +130,25 @@ func (h *handlers) edit(req micro.Request) {
 	ctx, cancel := opCtx()
 	defer cancel()
 
+	if r.Initiative != nil {
+		if err := h.st.checkInitiativeLive(ctx, *r.Initiative); err != nil {
+			h.fail(req, err)
+			return
+		}
+	}
 	if r.LocatedIn != nil {
-		if err := h.st.checkRegistered(ctx, *r.LocatedIn); err != nil {
+		// The located-in projects must belong to the item's initiative:
+		// the one being assigned in this same edit, or the snapshot's.
+		initiative := ""
+		if r.Initiative != nil {
+			initiative = *r.Initiative
+		} else if it, _, err := h.st.loadItem(ctx, r.ID); err != nil {
+			h.fail(req, err)
+			return
+		} else if it != nil {
+			initiative = it.Initiative
+		}
+		if err := h.st.checkRegistered(ctx, *r.LocatedIn, initiative); err != nil {
 			h.fail(req, err)
 			return
 		}
@@ -133,6 +156,7 @@ func (h *handlers) edit(req micro.Request) {
 	h.exec(ctx, req, r.ID, func(*contract.Item) (contract.Op, error) {
 		return contract.NewOp(contract.OpEdited, r.ID, r.Actor, contract.EditedPayload{
 			Priority:        r.Priority,
+			Initiative:      r.Initiative,
 			LocatedIn:       r.LocatedIn,
 			DiscoveredWhile: r.DiscoveredWhile,
 			Lands:           r.Lands,
@@ -148,9 +172,18 @@ func (h *handlers) transition(req micro.Request) {
 	ctx, cancel := opCtx()
 	defer cancel()
 
-	if err := h.st.checkRegistered(ctx, r.LocatedIn); err != nil {
-		h.fail(req, err)
-		return
+	if len(r.LocatedIn) > 0 {
+		initiative := ""
+		if it, _, err := h.st.loadItem(ctx, r.ID); err != nil {
+			h.fail(req, err)
+			return
+		} else if it != nil {
+			initiative = it.Initiative
+		}
+		if err := h.st.checkRegistered(ctx, r.LocatedIn, initiative); err != nil {
+			h.fail(req, err)
+			return
+		}
 	}
 	h.exec(ctx, req, r.ID, func(*contract.Item) (contract.Op, error) {
 		p := contract.TransitionedPayload{
@@ -279,10 +312,19 @@ func (h *handlers) registerProject(req micro.Request) {
 	op, err := contract.NewOp(contract.OpRegistered, r.Slug, r.Actor, contract.RegisteredPayload{
 		Name:        r.Name,
 		Description: r.Description,
+		Initiative:  r.Initiative,
 	})
 	if err != nil {
 		h.fail(req, err)
 		return
+	}
+	// The payload check requires an initiative; the registry check makes
+	// it a real one.
+	if r.Initiative != "" {
+		if err := h.st.checkInitiativeLive(ctx, r.Initiative); err != nil {
+			h.fail(req, err)
+			return
+		}
 	}
 	p, err := h.st.registerProject(ctx, op)
 	if err != nil {
@@ -290,6 +332,94 @@ func (h *handlers) registerProject(req micro.Request) {
 		return
 	}
 	h.respond(req, p)
+}
+
+func (h *handlers) assignProject(req micro.Request) {
+	var r client.AssignProjectRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpAssigned, r.Slug, r.Actor, contract.AssignedPayload{
+		Initiative: r.Initiative,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	if r.Initiative != "" {
+		if err := h.st.checkInitiativeLive(ctx, r.Initiative); err != nil {
+			h.fail(req, err)
+			return
+		}
+	}
+	p, err := h.st.assignProject(ctx, op)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, p)
+}
+
+func (h *handlers) registerInitiative(req micro.Request) {
+	var r client.RegisterInitiativeRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpRegistered, r.Slug, r.Actor, contract.RegisteredPayload{
+		Name:        r.Name,
+		Description: r.Description,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	i, err := h.st.registerInitiative(ctx, op)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, i)
+}
+
+func (h *handlers) retireInitiative(req micro.Request) {
+	var r client.RetireInitiativeRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpRetired, r.Slug, r.Actor, contract.RetiredPayload{
+		Reason: r.Reason,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	i, err := h.st.retireInitiative(ctx, op)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, i)
+}
+
+func (h *handlers) listInitiatives(req micro.Request) {
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	is, err := h.st.listInitiatives(ctx)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, is)
 }
 
 func (h *handlers) retireProject(req micro.Request) {

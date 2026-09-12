@@ -17,13 +17,20 @@ import (
 // The ops-log and bucket names live in contract, declared once for every
 // service (hits-hq/02-DESIGN/hits-up.md § boundaries). The key layout
 // inside the state bucket has one consumer — this store — so the prefixes
-// live here (decision 0012). They cannot collide: item IDs are decimal,
-// slugs are [a-z0-9-], and neither contains a dot.
+// live here (decision 0012). They cannot collide: the kind is the first
+// dotted segment, and within item. the prefixed IDs and legacy decimals
+// cannot meet — bare numbers are not valid initiative slugs.
 const (
-	itemKeyPrefix    = "item."
-	projectKeyPrefix = "project."
-	systemKeyPrefix  = "system."
-	counterKey       = systemKeyPrefix + "item-counter"
+	itemKeyPrefix       = "item."
+	projectKeyPrefix    = "project."
+	initiativeKeyPrefix = "initiative."
+	systemKeyPrefix     = "system."
+	// legacyCounterKey is the pre-0016 bare-ID counter: frozen — replay
+	// still derives it from the legacy range, but no mint advances it.
+	legacyCounterKey = systemKeyPrefix + "item-counter"
+	// counterKeyPrefix + initiative slug is that initiative's dense
+	// counter (decision 0016).
+	counterKeyPrefix = legacyCounterKey + "."
 	stateHistory     = 10 // KV revisions kept per key — "the last few states"
 	maxWriteAttempts = 8
 )
@@ -70,35 +77,38 @@ func openStore(ctx context.Context, nc *nats.Conn, cfg Config) (*store, error) {
 	return &store{js: js, stream: stream, state: state}, nil
 }
 
-// mintID allocates the next dense item ID via a CAS-update loop on the
-// counter key — the allocate-issue.sh trick without the git.
-func (s *store) mintID(ctx context.Context) (string, error) {
+// mintID allocates the next dense number of the initiative's counter via
+// a CAS-update loop — the allocate-issue.sh trick without the git — and
+// returns the prefixed item ID (decision 0016). The legacy bare counter
+// is never advanced by a mint.
+func (s *store) mintID(ctx context.Context, initiative string) (string, error) {
+	key := counterKeyPrefix + initiative
 	for {
-		entry, err := s.state.Get(ctx, counterKey)
+		entry, err := s.state.Get(ctx, key)
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			if _, cerr := s.state.Create(ctx, counterKey, []byte("1")); cerr != nil {
+			if _, cerr := s.state.Create(ctx, key, []byte("1")); cerr != nil {
 				if isCASConflict(cerr) {
 					continue // raced the first mint; re-read
 				}
-				return "", fmt.Errorf("init item counter: %w", cerr)
+				return "", fmt.Errorf("init %s counter: %w", initiative, cerr)
 			}
-			return "1", nil
+			return initiative + "-1", nil
 		}
 		if err != nil {
-			return "", fmt.Errorf("read item counter: %w", err)
+			return "", fmt.Errorf("read %s counter: %w", initiative, err)
 		}
 		n, err := strconv.ParseUint(string(entry.Value()), 10, 64)
 		if err != nil {
-			return "", fmt.Errorf("corrupt item counter %q: %w", entry.Value(), err)
+			return "", fmt.Errorf("corrupt %s counter %q: %w", initiative, entry.Value(), err)
 		}
 		next := strconv.FormatUint(n+1, 10)
-		if _, err := s.state.Update(ctx, counterKey, []byte(next), entry.Revision()); err != nil {
+		if _, err := s.state.Update(ctx, key, []byte(next), entry.Revision()); err != nil {
 			if isCASConflict(err) {
 				continue // someone else minted; take the next one
 			}
-			return "", fmt.Errorf("advance item counter: %w", err)
+			return "", fmt.Errorf("advance %s counter: %w", initiative, err)
 		}
-		return next, nil
+		return initiative + "-" + next, nil
 	}
 }
 
@@ -123,6 +133,10 @@ func (s *store) loadItem(ctx context.Context, id string) (*contract.Item, uint64
 
 func (s *store) loadProject(ctx context.Context, slug string) (*contract.Project, uint64, error) {
 	return loadSnapshot[contract.Project](ctx, s.state, projectKeyPrefix+slug)
+}
+
+func (s *store) loadInitiative(ctx context.Context, slug string) (*contract.Initiative, uint64, error) {
+	return loadSnapshot[contract.Initiative](ctx, s.state, initiativeKeyPrefix+slug)
 }
 
 func loadSnapshot[T any](ctx context.Context, kv jetstream.KeyValue, key string) (*T, uint64, error) {
@@ -193,6 +207,34 @@ func (s *store) saveProject(ctx context.Context, p *contract.Project, rev uint64
 			return nil, lerr
 		}
 		if current != nil && current.Seq >= p.Seq {
+			return current, nil
+		}
+		rev = curRev
+	}
+}
+
+func (s *store) saveInitiative(ctx context.Context, i *contract.Initiative, rev uint64) (*contract.Initiative, error) {
+	data, err := json.Marshal(i)
+	if err != nil {
+		return nil, fmt.Errorf("encode initiative %s: %w", i.Slug, err)
+	}
+	for {
+		if rev == 0 {
+			_, err = s.state.Create(ctx, initiativeKeyPrefix+i.Slug, data)
+		} else {
+			_, err = s.state.Update(ctx, initiativeKeyPrefix+i.Slug, data, rev)
+		}
+		if err == nil {
+			return i, nil
+		}
+		if !isCASConflict(err) {
+			return nil, fmt.Errorf("write initiative %s: %w", i.Slug, err)
+		}
+		current, curRev, lerr := s.loadInitiative(ctx, i.Slug)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if current != nil && current.Seq >= i.Seq {
 			return current, nil
 		}
 		rev = curRev
@@ -275,7 +317,7 @@ func (s *store) catchUp(ctx context.Context, id string) error {
 	if current != nil {
 		start = current.Seq + 1
 	}
-	err = s.foldRange(ctx, []string{subject}, start, last.Sequence, func(op contract.Op, seq uint64) error {
+	err = s.foldRange(ctx, []string{subject}, start, last.Sequence, func(_ string, op contract.Op, seq uint64) error {
 		next, aerr := contract.Apply(current, op, seq)
 		if aerr != nil {
 			return aerr
@@ -306,66 +348,96 @@ func (s *store) replay(ctx context.Context) error {
 	if info.State.LastSeq == 0 {
 		return nil
 	}
-	var maxID uint64
-	err = s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(op contract.Op, seq uint64) error {
-		if op.Op != contract.OpRegistered && op.Op != contract.OpRetired {
-			if n, perr := strconv.ParseUint(op.Entity, 10, 64); perr == nil && n > maxID {
-				maxID = n
+	maxIDs := map[string]uint64{}
+	err = s.foldRange(ctx, []string{contract.OpsSubjects}, 0, info.State.LastSeq, func(subject string, op contract.Op, seq uint64) error {
+		if strings.HasPrefix(subject, contract.ItemOpsPrefix) {
+			if initiative, ok := contract.ParseItemID(op.Entity); ok {
+				num := op.Entity[len(initiative):]
+				num = strings.TrimPrefix(num, "-")
+				if n, perr := strconv.ParseUint(num, 10, 64); perr == nil && n > maxIDs[initiative] {
+					maxIDs[initiative] = n
+				}
 			}
 		}
-		return s.foldOne(ctx, op, seq)
+		return s.foldOne(ctx, subject, op, seq)
 	})
 	if err != nil {
 		return err
 	}
-	return s.raiseCounter(ctx, maxID)
+	for initiative, n := range maxIDs {
+		key := legacyCounterKey
+		if initiative != "" {
+			key = counterKeyPrefix + initiative
+		}
+		if err := s.raiseCounter(ctx, key, n); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// raiseCounter lifts the item counter to at least n, never lowering it — a
-// concurrent mint that got further wins. This is the derivation that makes
-// the counter as disposable as the snapshots: every minted ID that reached
-// the log comes back through replay. The one accepted edge (decision 0012):
-// an ID minted for an op that never landed is reissued after a rebuild —
-// the log never named it, so nothing refers to it.
-func (s *store) raiseCounter(ctx context.Context, n uint64) error {
+// raiseCounter lifts one item counter key to at least n, never lowering
+// it — a concurrent mint that got further wins. This is the derivation
+// that makes the counters as disposable as the snapshots: every minted ID
+// that reached the log comes back through replay. The one accepted edge
+// (decision 0012): an ID minted for an op that never landed is reissued
+// after a rebuild — the log never named it, so nothing refers to it.
+func (s *store) raiseCounter(ctx context.Context, key string, n uint64) error {
 	if n == 0 {
 		return nil
 	}
 	val := []byte(strconv.FormatUint(n, 10))
 	for {
-		entry, err := s.state.Get(ctx, counterKey)
+		entry, err := s.state.Get(ctx, key)
 		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			if _, cerr := s.state.Create(ctx, counterKey, val); cerr != nil {
+			if _, cerr := s.state.Create(ctx, key, val); cerr != nil {
 				if isCASConflict(cerr) {
 					continue // raced a mint or another replay; re-read
 				}
-				return fmt.Errorf("init item counter at %d: %w", n, cerr)
+				return fmt.Errorf("init counter %s at %d: %w", key, n, cerr)
 			}
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("read item counter: %w", err)
+			return fmt.Errorf("read counter %s: %w", key, err)
 		}
 		cur, err := strconv.ParseUint(string(entry.Value()), 10, 64)
 		if err != nil {
-			return fmt.Errorf("corrupt item counter %q: %w", entry.Value(), err)
+			return fmt.Errorf("corrupt counter %s %q: %w", key, entry.Value(), err)
 		}
 		if cur >= n {
 			return nil
 		}
-		if _, err := s.state.Update(ctx, counterKey, val, entry.Revision()); err != nil {
+		if _, err := s.state.Update(ctx, key, val, entry.Revision()); err != nil {
 			if isCASConflict(err) {
 				continue // raced a mint; re-read and re-compare
 			}
-			return fmt.Errorf("raise item counter to %d: %w", n, err)
+			return fmt.Errorf("raise counter %s to %d: %w", key, n, err)
 		}
 		return nil
 	}
 }
 
-func (s *store) foldOne(ctx context.Context, op contract.Op, seq uint64) error {
-	switch op.Op {
-	case contract.OpRegistered, contract.OpRetired:
+// foldOne routes an op to its projection by the subject kind — the
+// dispatch rule of 02-DESIGN/ops-log.md § subjects: registered and
+// retired mean different registries on different subjects.
+func (s *store) foldOne(ctx context.Context, subject string, op contract.Op, seq uint64) error {
+	switch {
+	case strings.HasPrefix(subject, contract.InitiativeOpsPrefix):
+		current, rev, err := s.loadInitiative(ctx, op.Entity)
+		if err != nil {
+			return err
+		}
+		if current != nil && seq <= current.Seq {
+			return nil
+		}
+		next, err := contract.ApplyInitiative(current, op, seq)
+		if err != nil {
+			return err
+		}
+		_, err = s.saveInitiative(ctx, next, rev)
+		return err
+	case strings.HasPrefix(subject, contract.ProjectOpsPrefix):
 		current, rev, err := s.loadProject(ctx, op.Entity)
 		if err != nil {
 			return err
@@ -399,7 +471,7 @@ func (s *store) foldOne(ctx context.Context, op contract.Op, seq uint64) error {
 // foldRange reads ops in stream order via an ordered consumer — the only
 // delivery shape that guarantees per-subject order — from startSeq (0 means
 // the beginning) through at least lastSeq, handing each to fn.
-func (s *store) foldRange(ctx context.Context, subjects []string, startSeq, lastSeq uint64, fn func(op contract.Op, seq uint64) error) error {
+func (s *store) foldRange(ctx context.Context, subjects []string, startSeq, lastSeq uint64, fn func(subject string, op contract.Op, seq uint64) error) error {
 	cfg := jetstream.OrderedConsumerConfig{FilterSubjects: subjects}
 	if startSeq > 0 {
 		cfg.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
@@ -425,7 +497,7 @@ func (s *store) foldRange(ctx context.Context, subjects []string, startSeq, last
 			if err := json.Unmarshal(msg.Data(), &op); err != nil {
 				return fmt.Errorf("decode op at seq %d: %w", md.Sequence.Stream, err)
 			}
-			if err := fn(op, md.Sequence.Stream); err != nil {
+			if err := fn(msg.Subject(), op, md.Sequence.Stream); err != nil {
 				return err
 			}
 			if md.Sequence.Stream >= lastSeq {
@@ -528,9 +600,12 @@ func (s *store) listProjects(ctx context.Context) ([]contract.Project, error) {
 
 // checkRegistered rejects located-in values that name unregistered or
 // retired projects — the registry check the contract package cannot do
-// without I/O. The two refusals stay distinct so the caller knows whether
-// to register the slug or stop using it.
-func (s *store) checkRegistered(ctx context.Context, locatedIn []string) error {
+// without I/O — and, when both sides carry an initiative, projects
+// outside the item's own initiative (decision 0016). Blanks pass: the
+// pre-backfill window where legacy items and projects carry none must
+// keep working. The refusals stay distinct so the caller knows what to
+// fix.
+func (s *store) checkRegistered(ctx context.Context, locatedIn []string, initiative string) error {
 	for _, slug := range locatedIn {
 		p, _, err := s.loadProject(ctx, slug)
 		if err != nil {
@@ -544,6 +619,144 @@ func (s *store) checkRegistered(ctx context.Context, locatedIn []string) error {
 			return &contract.InvariantError{Name: "retired-project",
 				Message: fmt.Sprintf("located-in names %q, which is retired", slug)}
 		}
+		if initiative != "" && p.Initiative != "" && p.Initiative != initiative {
+			return &contract.InvariantError{Name: "initiative-mismatch",
+				Message: fmt.Sprintf("located-in names %q of initiative %s; the item is in %s — an item cannot span initiatives", slug, p.Initiative, initiative)}
+		}
 	}
 	return nil
+}
+
+// checkInitiativeLive rejects references to unregistered or retired
+// initiatives — the registry check behind create, edit assignment, and
+// project registration and assignment.
+func (s *store) checkInitiativeLive(ctx context.Context, slug string) error {
+	i, _, err := s.loadInitiative(ctx, slug)
+	if err != nil {
+		return err
+	}
+	if i == nil {
+		return &contract.InvariantError{Name: "unregistered-initiative",
+			Message: fmt.Sprintf("%q is not a registered initiative", slug)}
+	}
+	if i.Retired {
+		return &contract.InvariantError{Name: "retired-initiative",
+			Message: fmt.Sprintf("initiative %q is retired", slug)}
+	}
+	return nil
+}
+
+// registerInitiative validates and appends an initiative registration;
+// slug uniqueness is the expected-sequence-zero publish, exactly as for
+// projects.
+func (s *store) registerInitiative(ctx context.Context, op contract.Op) (*contract.Initiative, error) {
+	current, _, err := s.loadInitiative(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckInitiativeOp(current, op); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.InitiativeOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(0))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "already-registered",
+				Message: fmt.Sprintf("initiative %s is already registered", op.Entity)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyInitiative(nil, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveInitiative(ctx, next, 0)
+}
+
+// retireInitiative validates and appends an initiative retirement, with
+// the project retirement's CAS discipline.
+func (s *store) retireInitiative(ctx context.Context, op contract.Op) (*contract.Initiative, error) {
+	current, rev, err := s.loadInitiative(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckInitiativeOp(current, op); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.InitiativeOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(current.Seq))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "already-retired",
+				Message: fmt.Sprintf("initiative %s is already retired", op.Entity)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyInitiative(current, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveInitiative(ctx, next, rev)
+}
+
+// listInitiatives reads the initiative registry keys, dropping retired
+// entries — retired slugs stay in the bucket but leave the vocabulary.
+func (s *store) listInitiatives(ctx context.Context) ([]contract.Initiative, error) {
+	lister, err := s.state.ListKeysFiltered(ctx, initiativeKeyPrefix+">")
+	if err != nil {
+		return nil, fmt.Errorf("list initiatives: %w", err)
+	}
+	out := []contract.Initiative{}
+	for key := range lister.Keys() {
+		i, _, err := s.loadInitiative(ctx, strings.TrimPrefix(key, initiativeKeyPrefix))
+		if err != nil {
+			return nil, err
+		}
+		if i != nil && !i.Retired {
+			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
+// assignProject validates and appends a project assignment — a move to
+// another initiative, or the backfill of a pre-0016 registration — with
+// the retirement's CAS discipline.
+func (s *store) assignProject(ctx context.Context, op contract.Op) (*contract.Project, error) {
+	current, rev, err := s.loadProject(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckProjectOp(current, op); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.ProjectOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(current.Seq))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "contended-write",
+				Message: fmt.Sprintf("project %s changed underneath the assignment; retry", op.Entity)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyProject(current, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveProject(ctx, next, rev)
 }

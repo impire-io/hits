@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // InvariantError is a rejected command. Name is the machine-legible
@@ -46,6 +47,56 @@ func ValidActor(s string) bool { return actorRe.MatchString(s) }
 // ValidSlug reports whether s is a well-formed project slug (also the shape
 // of an item subject token).
 func ValidSlug(s string) bool { return slugRe.MatchString(s) }
+
+// ValidInitiativeSlug reports whether s may name an initiative: a
+// well-formed slug whose trailing hyphen-segment is not all digits — the
+// rule that keeps <initiative>-<n> item IDs unambiguous (decision 0016).
+// An all-digit slug is one trailing digit segment, hence refused too.
+func ValidInitiativeSlug(s string) bool {
+	if !ValidSlug(s) {
+		return false
+	}
+	tail := s
+	if i := strings.LastIndexByte(s, '-'); i >= 0 {
+		tail = s[i+1:]
+	}
+	// An empty tail is a trailing hyphen; an all-digit tail is the parse
+	// ambiguity itself. Both are refused.
+	return tail != "" && !allDigits(tail)
+}
+
+// ParseItemID splits an item ID into its initiative prefix and reports
+// whether the ID is well-formed: bare digits are a legacy ID (empty
+// initiative), and <initiative>-<n> carries its initiative. The item
+// number is the trailing all-digit segment (decision 0016).
+func ParseItemID(id string) (initiative string, ok bool) {
+	if id == "" {
+		return "", false
+	}
+	if allDigits(id) {
+		return "", true
+	}
+	i := strings.LastIndexByte(id, '-')
+	if i <= 0 || !allDigits(id[i+1:]) || id[i+1:] == "" {
+		return "", false
+	}
+	if !ValidInitiativeSlug(id[:i]) {
+		return "", false
+	}
+	return id[:i], true
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
 
 func validType(t Type) bool { return t == Bug || t == Task || t == Improvement }
 
@@ -151,6 +202,12 @@ func checkCreated(op Op) error {
 	if p.Priority != "" && !validPriority(p.Priority) {
 		return inv("invalid-priority", "priority %q is not high, normal or low", p.Priority)
 	}
+	if p.Initiative == "" {
+		return inv("initiative-required", "an item opens into an initiative — the mint needs it")
+	}
+	if !ValidInitiativeSlug(p.Initiative) {
+		return inv("invalid-initiative", "%q is not a well-formed initiative slug", p.Initiative)
+	}
 	if p.Type == Task && len(p.LocatedIn) == 0 {
 		return inv("task-requires-location", "a task cannot be created without located-in")
 	}
@@ -175,6 +232,14 @@ func checkEdited(current *Item, op Op) error {
 	}
 	if p.Priority != nil && !validPriority(*p.Priority) {
 		return inv("invalid-priority", "priority %q is not high, normal or low", *p.Priority)
+	}
+	if p.Initiative != nil {
+		if prefix, _ := ParseItemID(current.ID); prefix != "" {
+			return inv("initiative-immutable", "item %s carries its initiative in its ID; only legacy bare-ID items are assignable", current.ID)
+		}
+		if !ValidInitiativeSlug(*p.Initiative) {
+			return inv("invalid-initiative", "%q is not a well-formed initiative slug", *p.Initiative)
+		}
 	}
 	if p.LocatedIn != nil {
 		for _, loc := range *p.LocatedIn {
@@ -337,10 +402,34 @@ func CheckProjectOp(current *Project, op Op) error {
 		if p.Name == "" {
 			return inv("empty-name", "a project registers with a display name")
 		}
+		if p.Initiative == "" {
+			return inv("initiative-required", "a project registers into an initiative (decision 0016)")
+		}
+		if !ValidInitiativeSlug(p.Initiative) {
+			return inv("invalid-initiative", "%q is not a well-formed initiative slug", p.Initiative)
+		}
 		if err := overBudget("project name", p.Name, MaxLabelBytes); err != nil {
 			return err
 		}
 		return overBudget("project description", p.Description, MaxLabelBytes)
+	case OpAssigned:
+		if current == nil {
+			return inv("unregistered-project", "project %s is not registered", op.Entity)
+		}
+		if current.Retired {
+			return inv("retired-project", "project %s is retired", current.Slug)
+		}
+		var p AssignedPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Initiative == "" {
+			return inv("initiative-required", "an assignment names the initiative")
+		}
+		if !ValidInitiativeSlug(p.Initiative) {
+			return inv("invalid-initiative", "%q is not a well-formed initiative slug", p.Initiative)
+		}
+		return nil
 	case OpRetired:
 		if current == nil {
 			return inv("unregistered-project", "project %s is not registered", op.Entity)
@@ -358,6 +447,57 @@ func CheckProjectOp(current *Project, op Op) error {
 		return overBudget("retire reason", p.Reason, MaxLabelBytes)
 	default:
 		return inv("invalid-op", "unknown project op %q", op.Op)
+	}
+}
+
+// CheckInitiativeOp validates an initiative op against the current
+// registry entry (nil when the slug is unregistered). The lifecycle is
+// exactly the project's (decision 0015, extended by 0016); the slug rule
+// is stricter — no trailing all-digit segment, so prefixed item IDs stay
+// unambiguous.
+func CheckInitiativeOp(current *Initiative, op Op) error {
+	if !ValidActor(op.Actor) {
+		return inv("invalid-actor", "actor %q is not a well-formed handle", op.Actor)
+	}
+	if !ValidInitiativeSlug(op.Entity) {
+		return inv("invalid-initiative", "%q is not a well-formed initiative slug", op.Entity)
+	}
+	switch op.Op {
+	case OpRegistered:
+		if current != nil {
+			if current.Retired {
+				return inv("slug-retired", "initiative %s is retired; a retired slug is never reused", current.Slug)
+			}
+			return inv("already-registered", "initiative %s is already registered", current.Slug)
+		}
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Name == "" {
+			return inv("empty-name", "an initiative registers with a display name")
+		}
+		if err := overBudget("initiative name", p.Name, MaxLabelBytes); err != nil {
+			return err
+		}
+		return overBudget("initiative description", p.Description, MaxLabelBytes)
+	case OpRetired:
+		if current == nil {
+			return inv("unregistered-initiative", "initiative %s is not registered", op.Entity)
+		}
+		if current.Retired {
+			return inv("already-retired", "initiative %s is already retired", current.Slug)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Reason == "" {
+			return inv("empty-reason", "a retirement needs its reason")
+		}
+		return overBudget("retire reason", p.Reason, MaxLabelBytes)
+	default:
+		return inv("invalid-op", "unknown initiative op %q", op.Op)
 	}
 }
 

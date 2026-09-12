@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,7 +48,19 @@ func startStore(t *testing.T) *harness {
 		t.Fatalf("connect client side: %v", err)
 	}
 	t.Cleanup(nc.Close)
-	return &harness{url: url, svcConn: svcConn, c: client.New(nc)}
+	h := &harness{url: url, svcConn: svcConn, c: client.New(nc)}
+
+	// Nearly every test files items, and a create needs a live initiative
+	// for its mint (decision 0016); the harness registers the one the
+	// tests share.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := h.c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "hits", Name: "The HITS platform",
+	}); err != nil {
+		t.Fatalf("register initiative hits: %v", err)
+	}
+	return h
 }
 
 func testCtx(t *testing.T) context.Context {
@@ -61,7 +74,7 @@ func testCtx(t *testing.T) context.Context {
 func (h *harness) mustProject(ctx context.Context, t *testing.T, slug string) {
 	t.Helper()
 	if _, err := h.c.RegisterProject(ctx, client.RegisterProjectRequest{
-		Actor: "daan", Slug: slug, Name: slug + " repo",
+		Actor: "daan", Slug: slug, Name: slug + " repo", Initiative: "hits",
 	}); err != nil {
 		t.Fatalf("register project %s: %v", slug, err)
 	}
@@ -85,12 +98,12 @@ func TestItemRoundTrip(t *testing.T) {
 	h.mustProject(ctx, t, "hits")
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "the projector lags behind the log",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the projector lags behind the log",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if it.ID != "1" || it.Status != contract.Open || it.Priority != contract.Normal || it.Reporter != "daan" {
+	if it.ID != "hits-1" || it.Status != contract.Open || it.Priority != contract.Normal || it.Reporter != "daan" || it.Initiative != "hits" {
 		t.Fatalf("created item = %+v", it)
 	}
 
@@ -134,7 +147,7 @@ func TestItemRoundTrip(t *testing.T) {
 
 	// A second item to link against, then unlink.
 	other, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Improvement, Report: "projector lag metrics would help",
+		Actor: "daan", Initiative: "hits", Type: contract.Improvement, Report: "projector lag metrics would help",
 	})
 	if err != nil {
 		t.Fatalf("create other: %v", err)
@@ -195,7 +208,7 @@ func TestConcurrentClaimsAdmitOneWinner(t *testing.T) {
 	ctx := testCtx(t)
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "claims must serialize",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "claims must serialize",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -241,11 +254,11 @@ func TestInvariantRejectionsByName(t *testing.T) {
 	ctx := testCtx(t)
 	h.mustProject(ctx, t, "hits")
 
-	_, err := h.c.CreateItem(ctx, client.CreateItemRequest{Actor: "daan", Type: contract.Task, Report: "no home"})
+	_, err := h.c.CreateItem(ctx, client.CreateItemRequest{Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "no home"})
 	wantAPIError(t, err, "task-requires-location")
 
 	_, err = h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "ghost repo", LocatedIn: []string{"ghost"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "ghost repo", LocatedIn: []string{"ghost"},
 	})
 	wantAPIError(t, err, "unregistered-project")
 
@@ -253,7 +266,7 @@ func TestInvariantRejectionsByName(t *testing.T) {
 	wantAPIError(t, err, "not-found")
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "close me", LocatedIn: []string{"hits"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "close me", LocatedIn: []string{"hits"},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -296,7 +309,7 @@ func TestProjectRetirementOnTheWire(t *testing.T) {
 
 	// Filed against the slug while it was still vocabulary.
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "cutover leftovers", LocatedIn: []string{"001-hits"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "cutover leftovers", LocatedIn: []string{"001-hits"},
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -325,7 +338,7 @@ func TestProjectRetirementOnTheWire(t *testing.T) {
 
 	// Every new reference is refused; the refusal names retirement.
 	_, err = h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "late reference", LocatedIn: []string{"001-hits"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "late reference", LocatedIn: []string{"001-hits"},
 	})
 	wantAPIError(t, err, "retired-project")
 	loc := []string{"001-hits"}
@@ -367,7 +380,7 @@ func TestReplayReproducesProjections(t *testing.T) {
 	}
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "replay must reproduce state",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "replay must reproduce state",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -424,19 +437,123 @@ func TestReplayReproducesProjections(t *testing.T) {
 	wantAPIError(t, err, "slug-retired")
 
 	// The counter went down with the bucket; replay derived it back from
-	// the log, so the next mint is the next dense ID, colliding with
-	// nothing (spec 010 FR-03).
-	n, err := strconv.ParseUint(it.ID, 10, 64)
+	// the log, so the next mint is the next dense number of the item's
+	// initiative, colliding with nothing (spec 010 FR-03, decision 0016).
+	num := strings.TrimPrefix(it.ID, "hits-")
+	n, err := strconv.ParseUint(num, 10, 64)
 	if err != nil {
-		t.Fatalf("item ID %q is not decimal: %v", it.ID, err)
+		t.Fatalf("item ID %q has no decimal tail: %v", it.ID, err)
 	}
 	next, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "the counter is derived too",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the counter is derived too",
 	})
 	if err != nil {
 		t.Fatalf("create after replay: %v", err)
 	}
-	if want := strconv.FormatUint(n+1, 10); next.ID != want {
+	if want := "hits-" + strconv.FormatUint(n+1, 10); next.ID != want {
 		t.Fatalf("post-replay mint = %q, want %q — the replayed counter must resume dense", next.ID, want)
+	}
+}
+
+// TestInitiativesEndToEnd drives the second vocabulary over the wire:
+// registration with the stricter slug rule, per-initiative dense mints,
+// the span refusal, assignment, prefixed-ID immutability, and retirement
+// closing the vocabulary (decision 0016).
+func TestInitiativesEndToEnd(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+
+	// The harness registered "hits"; a second entry joins, the slug rule
+	// holding the door.
+	i, err := h.c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "chronicle-hq", Name: "Chronicle",
+	})
+	if err != nil {
+		t.Fatalf("register initiative: %v", err)
+	}
+	if i.Slug != "chronicle-hq" || i.Name != "Chronicle" {
+		t.Fatalf("initiative = %+v", i)
+	}
+	_, err = h.c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "team-42", Name: "nope",
+	})
+	wantAPIError(t, err, "invalid-initiative")
+
+	// Dense per-initiative sequences: interleaved creates never share a
+	// counter.
+	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "first in hits",
+	})
+	if err != nil {
+		t.Fatalf("create a: %v", err)
+	}
+	b, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "chronicle-hq", Type: contract.Bug, Report: "first in chronicle",
+	})
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	c2, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "second in hits",
+	})
+	if err != nil {
+		t.Fatalf("create c: %v", err)
+	}
+	if a.ID != "hits-1" || b.ID != "chronicle-hq-1" || c2.ID != "hits-2" {
+		t.Fatalf("minted IDs = %s, %s, %s; want hits-1, chronicle-hq-1, hits-2", a.ID, b.ID, c2.ID)
+	}
+	if b.Initiative != "chronicle-hq" {
+		t.Fatalf("item initiative = %q", b.Initiative)
+	}
+
+	is, err := h.c.ListInitiatives(ctx)
+	if err != nil {
+		t.Fatalf("list initiatives: %v", err)
+	}
+	if len(is) != 2 {
+		t.Fatalf("initiative list = %+v", is)
+	}
+
+	// An item cannot span initiatives: the hits project refuses to locate
+	// a chronicle item — until the project moves.
+	h.mustProject(ctx, t, "hits")
+	_, err = h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "chronicle-hq", Type: contract.Task,
+		Report: "cross-initiative", LocatedIn: []string{"hits"},
+	})
+	wantAPIError(t, err, "initiative-mismatch")
+	if _, err := h.c.AssignProject(ctx, client.AssignProjectRequest{
+		Actor: "daan", Slug: "hits", Initiative: "chronicle-hq",
+	}); err != nil {
+		t.Fatalf("assign project: %v", err)
+	}
+	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "chronicle-hq", Type: contract.Task,
+		Report: "now it fits", LocatedIn: []string{"hits"},
+	}); err != nil {
+		t.Fatalf("create after assignment: %v", err)
+	}
+
+	// A prefixed item's initiative is immutable in its ID.
+	other := "chronicle-hq"
+	_, err = h.c.EditItem(ctx, client.EditItemRequest{Actor: "daan", ID: a.ID, Initiative: &other})
+	wantAPIError(t, err, "initiative-immutable")
+
+	// Retirement closes the vocabulary: no new mints, listings drop it.
+	if _, err := h.c.RetireInitiative(ctx, client.RetireInitiativeRequest{
+		Actor: "daan", Slug: "chronicle-hq", Reason: "moved out",
+	}); err != nil {
+		t.Fatalf("retire initiative: %v", err)
+	}
+	_, err = h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "chronicle-hq", Type: contract.Bug, Report: "too late",
+	})
+	wantAPIError(t, err, "retired-initiative")
+	is, err = h.c.ListInitiatives(ctx)
+	if err != nil {
+		t.Fatalf("list after retire: %v", err)
+	}
+	if len(is) != 1 || is[0].Slug != "hits" {
+		t.Fatalf("post-retire list = %+v", is)
 	}
 }

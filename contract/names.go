@@ -15,6 +15,9 @@ const (
 	ItemOpsSubjects = "hits.ops.item.>"
 	// ProjectOpsPrefix + slug is the subject a project's ops append to.
 	ProjectOpsPrefix = "hits.ops.project."
+	// InitiativeOpsPrefix + slug is the subject an initiative's ops
+	// append to (decision 0016).
+	InitiativeOpsPrefix = "hits.ops.initiative."
 	// StateBucket holds the state projection — item snapshots, the
 	// located-in vocabulary, and operational keys, all folds of the log,
 	// told apart by key prefix (decision 0012).

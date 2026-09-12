@@ -63,7 +63,7 @@ func TestSearchLiveTail(t *testing.T) {
 	startSearch(t, h)
 
 	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "the projector lags behind the ops log",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the projector lags behind the ops log",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -100,12 +100,12 @@ func TestSearchRebuildFiltersPaging(t *testing.T) {
 	h.mustProject(ctx, t, "hits")
 
 	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "alpha signal lost on reconnect",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "alpha signal lost on reconnect",
 	}); err != nil {
 		t.Fatalf("create bug: %v", err)
 	}
 	task, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "sync the beta docs", LocatedIn: []string{"hits"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "sync the beta docs", LocatedIn: []string{"hits"},
 	})
 	if err != nil {
 		t.Fatalf("create task: %v", err)
@@ -146,5 +146,40 @@ func TestSearchRebuildFiltersPaging(t *testing.T) {
 	}
 	if len(rest.Hits) != 1 || rest.Hits[0].ID == page.Hits[0].ID {
 		t.Fatalf("offset page = %+v, want the other item than %+v", rest.Hits, page.Hits)
+	}
+}
+
+// TestSearchInitiativeFilter: the initiative is a keyword field beside
+// type and status — the filter narrows to one initiative's items
+// (decision 0016).
+func TestSearchInitiativeFilter(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	startSearch(t, h)
+
+	if _, err := h.c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
+		Actor: "daan", Slug: "pra", Name: "PRA",
+	}); err != nil {
+		t.Fatalf("register initiative pra: %v", err)
+	}
+	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "shared symptom words",
+	}); err != nil {
+		t.Fatalf("create in hits: %v", err)
+	}
+	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "pra", Type: contract.Bug, Report: "shared symptom words",
+	}); err != nil {
+		t.Fatalf("create in pra: %v", err)
+	}
+
+	waitFor(t, "both items indexed", func() bool {
+		return total(ctx, t, h, client.SearchRequest{Query: "symptom"}) == 2
+	})
+	if got := total(ctx, t, h, client.SearchRequest{Query: "symptom", Initiative: "pra"}); got != 1 {
+		t.Errorf("filtered total = %d, want 1", got)
+	}
+	if got := total(ctx, t, h, client.SearchRequest{Initiative: "hits"}); got != 1 {
+		t.Errorf("flagless-query initiative filter total = %d, want 1", got)
 	}
 }

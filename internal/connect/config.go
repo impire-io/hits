@@ -14,8 +14,9 @@ import (
 // issue 005-cli-config-file).
 type config struct {
 	Defaults struct {
-		Context string `json:"context"`
-		Actor   string `json:"actor"`
+		Context    string `json:"context"`
+		Actor      string `json:"actor"`
+		Initiative string `json:"initiative"`
 	} `json:"defaults"`
 }
 
@@ -48,10 +49,32 @@ func DefaultActor() string {
 	return cfg.Defaults.Actor
 }
 
-// saveDefaultContext records the select verb's one write: defaults.context,
-// preserving every other field the file carries — the config schema may
-// grow around this writer.
+// DefaultInitiative is the client config's selected initiative — the
+// filing default behind hits initiative select (decision 0016), never a
+// read scope. "" when unset or the config is unreadable.
+func DefaultInitiative() string {
+	cfg, err := loadConfig()
+	if err != nil {
+		return ""
+	}
+	return cfg.Defaults.Initiative
+}
+
+// SaveDefaultInitiative records the initiative select verb's one write:
+// defaults.initiative. Verification that the slug is registered is the
+// caller's job — this layer has no connection.
+func SaveDefaultInitiative(slug string) error {
+	return saveDefault("initiative", slug)
+}
+
+// saveDefaultContext records the select verb's one write: defaults.context.
 func saveDefaultContext(name string) error {
+	return saveDefault("context", name)
+}
+
+// saveDefault sets one defaults.<field> value, preserving every other
+// field the file carries — the config schema may grow around this writer.
+func saveDefault(field, value string) error {
 	path := configPath()
 	doc := map[string]any{}
 	b, err := os.ReadFile(path)
@@ -68,7 +91,7 @@ func saveDefaultContext(name string) error {
 	if defaults == nil {
 		defaults = map[string]any{}
 	}
-	defaults["context"] = name
+	defaults[field] = value
 	doc["defaults"] = defaults
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {

@@ -49,7 +49,7 @@ func TestGraphEdgesFollowOps(t *testing.T) {
 	startGraph(t, h)
 
 	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "graph edges must follow ops",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "graph edges must follow ops",
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -108,7 +108,7 @@ func TestGraphEdgesFollowOps(t *testing.T) {
 	}
 
 	b, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Improvement, Report: "a second node",
+		Actor: "daan", Initiative: "hits", Type: contract.Improvement, Report: "a second node",
 	})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
@@ -144,13 +144,13 @@ func TestGraphRebuildWalkTombstone(t *testing.T) {
 	h.mustProject(ctx, t, "hits")
 
 	a, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Bug, Report: "start of the chain",
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "start of the chain",
 	})
 	if err != nil {
 		t.Fatalf("create a: %v", err)
 	}
 	b, err := h.c.CreateItem(ctx, client.CreateItemRequest{
-		Actor: "daan", Type: contract.Task, Report: "the located link", LocatedIn: []string{"hits"},
+		Actor: "daan", Initiative: "hits", Type: contract.Task, Report: "the located link", LocatedIn: []string{"hits"},
 	})
 	if err != nil {
 		t.Fatalf("create b: %v", err)
@@ -226,4 +226,50 @@ func containsNode(nodes []client.NodeRef, kind client.NodeKind, id string) bool 
 		}
 	}
 	return false
+}
+
+// TestGraphInitiativeNodes: initiative nodes materialize through derived
+// in-initiative edges — item → initiative from the snapshot, project →
+// initiative from registration and assignment — carrying their registered
+// names (decision 0016).
+func TestGraphInitiativeNodes(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	h.mustProject(ctx, t, "hits")
+	startGraph(t, h)
+
+	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Task,
+		Report: "an item under the initiative", LocatedIn: []string{"hits"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	initiativeNode := client.NodeRef{Kind: client.NodeInitiative, ID: "hits"}
+	waitFor(t, "item in-initiative edge", func() bool {
+		return hasEdge(ctx, t, h, client.NeighborsRequest{Kind: client.NodeItem, ID: it.ID},
+			client.EdgeInInitiative, initiativeNode)
+	})
+	waitFor(t, "project in-initiative edge", func() bool {
+		return hasEdge(ctx, t, h, client.NeighborsRequest{Kind: client.NodeProject, ID: "hits"},
+			client.EdgeInInitiative, initiativeNode)
+	})
+
+	// The initiative node answers from its side too, named from its
+	// registration.
+	reply, err := h.c.GraphNeighbors(ctx, client.NeighborsRequest{
+		Kind: client.NodeInitiative, ID: "hits", Direction: "in",
+	})
+	if err != nil {
+		t.Fatalf("initiative neighbors: %v", err)
+	}
+	if len(reply.Edges) < 2 {
+		t.Fatalf("initiative in-edges = %+v, want the item and the project", reply.Edges)
+	}
+	for _, e := range reply.Edges {
+		if e.To.Name != "The HITS platform" {
+			t.Errorf("initiative node name = %q, want the registered name", e.To.Name)
+		}
+	}
 }

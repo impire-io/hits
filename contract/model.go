@@ -103,6 +103,7 @@ type Item struct {
 	Type            Type      `json:"type"`
 	Status          Status    `json:"status"`
 	Priority        Priority  `json:"priority"`
+	Initiative      string    `json:"initiative,omitempty"`
 	Report          string    `json:"report"`
 	Reporter        string    `json:"reporter"`
 	Created         time.Time `json:"created"`
@@ -145,6 +146,21 @@ func (it *Item) clone() *Item {
 // marker replay depends on) but leaves every view: listings drop it,
 // located-in refuses it, and the slug is never reused.
 type Project struct {
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Initiative   string `json:"initiative,omitempty"`
+	Retired      bool   `json:"retired,omitempty"`
+	RetireReason string `json:"retire-reason,omitempty"`
+	Seq          uint64 `json:"seq"`
+}
+
+// Initiative is one entry of the second registered vocabulary: a named
+// group of projects (decision 0016). Same thin shape and lifecycle as a
+// project — registration and retirement, nothing else — and the same
+// kept-key retirement semantics. An initiative is a lens, not a wall:
+// it scopes views and mints IDs, it restricts nothing.
+type Initiative struct {
 	Slug         string `json:"slug"`
 	Name         string `json:"name"`
 	Description  string `json:"description,omitempty"`
