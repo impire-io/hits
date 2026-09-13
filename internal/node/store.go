@@ -468,20 +468,27 @@ func (s *store) foldOne(ctx context.Context, subject string, op contract.Op, seq
 	}
 }
 
-// foldRange reads ops in stream order via an ordered consumer — the only
-// delivery shape that guarantees per-subject order — from startSeq (0 means
-// the beginning) through at least lastSeq, handing each to fn.
+// foldRange reads ops in stream order — from startSeq (0 means the
+// beginning) through at least lastSeq, handing each to fn. The cursor
+// lives HERE, never in a consumer: every bounded batch gets its own
+// ordered consumer started exactly at the cursor, because re-fetching
+// from one ordered consumer restarts delivery at its original position —
+// the defect that wedged every boot in an infinite first-256 loop the
+// moment the ops-log outgrew a single batch.
 func (s *store) foldRange(ctx context.Context, subjects []string, startSeq, lastSeq uint64, fn func(subject string, op contract.Op, seq uint64) error) error {
-	cfg := jetstream.OrderedConsumerConfig{FilterSubjects: subjects}
-	if startSeq > 0 {
-		cfg.DeliverPolicy = jetstream.DeliverByStartSequencePolicy
-		cfg.OptStartSeq = startSeq
-	}
-	cons, err := s.stream.OrderedConsumer(ctx, cfg)
-	if err != nil {
-		return fmt.Errorf("ordered consumer: %w", err)
+	next := startSeq
+	if next == 0 {
+		next = 1
 	}
 	for {
+		cons, err := s.stream.OrderedConsumer(ctx, jetstream.OrderedConsumerConfig{
+			FilterSubjects: subjects,
+			DeliverPolicy:  jetstream.DeliverByStartSequencePolicy,
+			OptStartSeq:    next,
+		})
+		if err != nil {
+			return fmt.Errorf("ordered consumer: %w", err)
+		}
 		batch, err := cons.FetchNoWait(256)
 		if err != nil {
 			return fmt.Errorf("fetch ops: %w", err)
@@ -503,6 +510,7 @@ func (s *store) foldRange(ctx context.Context, subjects []string, startSeq, last
 			if md.Sequence.Stream >= lastSeq {
 				return nil
 			}
+			next = md.Sequence.Stream + 1
 		}
 		if err := batch.Error(); err != nil {
 			return fmt.Errorf("fetch ops: %w", err)

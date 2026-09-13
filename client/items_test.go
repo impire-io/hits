@@ -557,3 +557,71 @@ func TestInitiativesEndToEnd(t *testing.T) {
 		t.Fatalf("post-retire list = %+v", is)
 	}
 }
+
+// TestReplayBeyondOneBatch: the ops-log outgrowing one fetch batch (256)
+// must not wedge replay — the live install's boot looped forever on the
+// first 256 ops the day the log crossed that line. The fold's cursor,
+// not the consumer, owns the position.
+func TestReplayBeyondOneBatch(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+
+	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the log will outgrow a batch",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	const notes = 300 // ops well past one 256 batch
+	for i := 0; i < notes; i++ {
+		if _, err := h.c.NoteItem(ctx, client.NoteItemRequest{
+			Actor: "daan", ID: it.ID, Text: "trail entry " + strconv.Itoa(i),
+		}); err != nil {
+			t.Fatalf("note %d: %v", i, err)
+		}
+	}
+
+	js, err := jetstream.New(h.svcConn)
+	if err != nil {
+		t.Fatalf("jetstream: %v", err)
+	}
+	if err := js.DeleteKeyValue(ctx, contract.StateBucket); err != nil {
+		t.Fatalf("delete bucket: %v", err)
+	}
+
+	// Pre-fix this replay never returned; a bounded wait turns the hang
+	// into a clean failure.
+	done := make(chan error, 1)
+	go func() {
+		svc, err := node.Start(ctx, h.svcConn, node.Config{})
+		if err == nil {
+			t.Cleanup(func() { _ = svc.Stop() })
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("restart node: %v", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("replay wedged: the node never came back once the log passed one batch")
+	}
+
+	after, err := h.c.GetItem(ctx, it.ID)
+	if err != nil {
+		t.Fatalf("get after replay: %v", err)
+	}
+	if len(after.Notes) != notes {
+		t.Fatalf("replayed notes = %d, want %d", len(after.Notes), notes)
+	}
+	next, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "the counter survived too",
+	})
+	if err != nil {
+		t.Fatalf("create after replay: %v", err)
+	}
+	if next.ID != "hits-2" {
+		t.Fatalf("post-replay mint = %q, want hits-2", next.ID)
+	}
+}
