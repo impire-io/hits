@@ -14,6 +14,7 @@ type searchItemsIn struct {
 	Type       contract.Type   `json:"type,omitempty" jsonschema:"filter by item type"`
 	Status     contract.Status `json:"status,omitempty" jsonschema:"filter by status"`
 	Initiative string          `json:"initiative,omitempty" jsonschema:"filter by initiative"`
+	Target     string          `json:"target,omitempty" jsonschema:"filter by target release slug"`
 	Limit      int             `json:"limit,omitempty" jsonschema:"page size (service default 10, capped at 100)"`
 	Offset     int             `json:"offset,omitempty" jsonschema:"page start"`
 }
@@ -24,14 +25,14 @@ type semanticSearchIn struct {
 }
 
 type graphNeighborsIn struct {
-	Kind      client.NodeKind `json:"kind" jsonschema:"node kind: item, project, or actor"`
+	Kind      client.NodeKind `json:"kind" jsonschema:"node kind: item, project, initiative, release, or actor"`
 	ID        string          `json:"id" jsonschema:"the node's id"`
 	Direction string          `json:"direction,omitempty" jsonschema:"edge direction: out, in, or both (the default)"`
 	Types     []string        `json:"types,omitempty" jsonschema:"narrow to the named edge types"`
 }
 
 type graphWalkIn struct {
-	Kind      client.NodeKind `json:"kind" jsonschema:"node kind: item, project, or actor"`
+	Kind      client.NodeKind `json:"kind" jsonschema:"node kind: item, project, initiative, release, or actor"`
 	ID        string          `json:"id" jsonschema:"the node's id"`
 	Depth     int             `json:"depth,omitempty" jsonschema:"expansion depth (service default 2, capped)"`
 	Direction string          `json:"direction,omitempty" jsonschema:"edge direction: out, in, or both (the default)"`
@@ -43,7 +44,7 @@ func addQueryTools(s *sdk.Server, c *client.Client) {
 		func(ctx context.Context, _ *sdk.CallToolRequest, in searchItemsIn) (*sdk.CallToolResult, client.SearchReply, error) {
 			r, err := c.SearchItems(ctx, client.SearchRequest{
 				Query: in.Query, Type: in.Type, Status: in.Status, Initiative: in.Initiative,
-				Limit: in.Limit, Offset: in.Offset,
+				Target: in.Target, Limit: in.Limit, Offset: in.Offset,
 			})
 			return nil, r, err
 		})

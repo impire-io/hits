@@ -98,6 +98,40 @@ func allDigits(s string) bool {
 	return true
 }
 
+// ValidReleaseSlug reports whether s may name a release: dot-separated
+// segments, each a well-formed slug — dots are wanted, releases are
+// usually versions ("0.5") — within one label's length. Uniqueness is per
+// initiative, and nothing prefixes item IDs with it, so neither the
+// global-uniqueness nor the trailing-digit machinery of the other
+// vocabularies applies (decision 0017).
+func ValidReleaseSlug(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, seg := range strings.Split(s, ".") {
+		if !ValidSlug(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseReleaseEntity splits a release op's entity — <initiative>.<slug> —
+// and reports whether it is well-formed. Initiative slugs are dot-free,
+// so the initiative is everything up to the first dot and the release
+// slug is the rest, dots literal (decision 0017).
+func ParseReleaseEntity(entity string) (initiative, slug string, ok bool) {
+	i := strings.IndexByte(entity, '.')
+	if i <= 0 || i == len(entity)-1 {
+		return "", "", false
+	}
+	initiative, slug = entity[:i], entity[i+1:]
+	if !ValidInitiativeSlug(initiative) || !ValidReleaseSlug(slug) {
+		return "", "", false
+	}
+	return initiative, slug, true
+}
+
 func validType(t Type) bool { return t == Bug || t == Task || t == Improvement }
 
 func validPriority(p Priority) bool { return p == High || p == Normal || p == Low }
@@ -208,6 +242,9 @@ func checkCreated(op Op) error {
 	if !ValidInitiativeSlug(p.Initiative) {
 		return inv("invalid-initiative", "%q is not a well-formed initiative slug", p.Initiative)
 	}
+	if p.Target != "" && !ValidReleaseSlug(p.Target) {
+		return inv("invalid-release", "%q is not a well-formed release slug", p.Target)
+	}
 	if p.Type == Task && len(p.LocatedIn) == 0 {
 		return inv("task-requires-location", "a task cannot be created without located-in")
 	}
@@ -245,6 +282,9 @@ func checkEdited(current *Item, op Op) error {
 			return inv("invalid-initiative", "%q is not a well-formed initiative slug", *p.Initiative)
 		}
 	}
+	if p.Target != nil && *p.Target != "" && !ValidReleaseSlug(*p.Target) {
+		return inv("invalid-release", "%q is not a well-formed release slug", *p.Target)
+	}
 	if p.LocatedIn != nil {
 		for _, loc := range *p.LocatedIn {
 			if !ValidSlug(loc) {
@@ -261,10 +301,12 @@ func checkEdited(current *Item, op Op) error {
 }
 
 // initiativeOnlyEdit reports whether the edit carries the initiative and
-// nothing else — the one edit a terminal item accepts.
+// nothing else — the one edit a terminal item accepts. Target is not in
+// the exception: terminal-is-terminal is what freezes an item's target
+// at close (decision 0017).
 func initiativeOnlyEdit(p EditedPayload) bool {
-	return p.Initiative != nil && p.Priority == nil && p.LocatedIn == nil &&
-		p.DiscoveredWhile == nil && p.Lands == nil
+	return p.Initiative != nil && p.Priority == nil && p.Target == nil &&
+		p.LocatedIn == nil && p.DiscoveredWhile == nil && p.Lands == nil
 }
 
 func checkEditedLands(p EditedPayload) error {
@@ -513,6 +555,95 @@ func CheckInitiativeOp(current *Initiative, op Op) error {
 		return overBudget("retire reason", p.Reason, MaxLabelBytes)
 	default:
 		return inv("invalid-op", "unknown initiative op %q", op.Op)
+	}
+}
+
+// CheckReleaseOp validates a release op against the current registry
+// entry (nil when the slug is unregistered). The entity is
+// <initiative>.<slug>; lifecycle register → shipped | retired, both
+// terminal (decision 0017). The straggler gate on shipping needs the
+// item snapshots and lives on the write path, like the located-in
+// registry check.
+func CheckReleaseOp(current *Release, op Op) error {
+	if !ValidActor(op.Actor) {
+		return inv("invalid-actor", "actor %q is not a well-formed handle", op.Actor)
+	}
+	if _, _, ok := ParseReleaseEntity(op.Entity); !ok {
+		return inv("invalid-release", "%q is not <initiative>.<slug> with well-formed slugs", op.Entity)
+	}
+	switch op.Op {
+	case OpRegistered:
+		if current != nil {
+			if current.Retired {
+				return inv("slug-retired", "release %s is retired; a retired slug is never reused", current.Slug)
+			}
+			if current.Shipped {
+				return inv("slug-shipped", "release %s is shipped; a shipped slug is never reused", current.Slug)
+			}
+			return inv("already-registered", "release %s is already registered", current.Slug)
+		}
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Name == "" {
+			return inv("empty-name", "a release registers with a display name")
+		}
+		if err := overBudget("release name", p.Name, MaxLabelBytes); err != nil {
+			return err
+		}
+		return overBudget("release description", p.Description, MaxLabelBytes)
+	case OpShipped:
+		if current == nil {
+			return inv("unregistered-release", "release %s is not registered", op.Entity)
+		}
+		if current.Retired {
+			return inv("release-retired", "release %s is retired", current.Slug)
+		}
+		if current.Shipped {
+			return inv("already-shipped", "release %s is already shipped", current.Slug)
+		}
+		var p ShippedPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if len(p.Refs) == 0 {
+			return inv("empty-refs", "a ship carries verifiable refs — tag, commit, or artifact")
+		}
+		for _, ref := range p.Refs {
+			if ref.Tag == "" && ref.Commit == "" && ref.Artifact == "" {
+				return inv("empty-ref", "a ship ref names a tag, commit, or artifact")
+			}
+			for _, f := range []struct{ field, s string }{
+				{"ship tag", ref.Tag}, {"ship commit", ref.Commit},
+				{"ship artifact", ref.Artifact}, {"ship ref note", ref.Note},
+			} {
+				if err := overBudget(f.field, f.s, MaxLabelBytes); err != nil {
+					return err
+				}
+			}
+		}
+		return overBudget("ship note", p.Note, MaxLabelBytes)
+	case OpRetired:
+		if current == nil {
+			return inv("unregistered-release", "release %s is not registered", op.Entity)
+		}
+		if current.Shipped {
+			return inv("release-shipped", "release %s is shipped; shipped is terminal", current.Slug)
+		}
+		if current.Retired {
+			return inv("already-retired", "release %s is already retired", current.Slug)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return err
+		}
+		if p.Reason == "" {
+			return inv("empty-reason", "a retirement needs its reason")
+		}
+		return overBudget("retire reason", p.Reason, MaxLabelBytes)
+	default:
+		return inv("invalid-op", "unknown release op %q", op.Op)
 	}
 }
 

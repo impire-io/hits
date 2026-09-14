@@ -67,6 +67,7 @@ func (h *handlers) create(req micro.Request) {
 		Report:          r.Report,
 		Priority:        r.Priority,
 		Initiative:      r.Initiative,
+		Target:          r.Target,
 		LocatedIn:       r.LocatedIn,
 		DiscoveredWhile: r.DiscoveredWhile,
 	})
@@ -87,6 +88,12 @@ func (h *handlers) create(req micro.Request) {
 	if err := h.st.checkRegistered(ctx, r.LocatedIn, r.Initiative); err != nil {
 		h.fail(req, err)
 		return
+	}
+	if r.Target != "" {
+		if err := h.st.checkTargetLive(ctx, r.Initiative, r.Target); err != nil {
+			h.fail(req, err)
+			return
+		}
 	}
 	id, err := h.st.mintID(ctx, r.Initiative)
 	if err != nil {
@@ -136,9 +143,10 @@ func (h *handlers) edit(req micro.Request) {
 			return
 		}
 	}
-	if r.LocatedIn != nil {
-		// The located-in projects must belong to the item's initiative:
-		// the one being assigned in this same edit, or the snapshot's.
+	if r.LocatedIn != nil || (r.Target != nil && *r.Target != "") {
+		// Located-in projects and the target release must belong to the
+		// item's initiative: the one being assigned in this same edit, or
+		// the snapshot's.
 		initiative := ""
 		if r.Initiative != nil {
 			initiative = *r.Initiative
@@ -148,15 +156,24 @@ func (h *handlers) edit(req micro.Request) {
 		} else if it != nil {
 			initiative = it.Initiative
 		}
-		if err := h.st.checkRegistered(ctx, *r.LocatedIn, initiative); err != nil {
-			h.fail(req, err)
-			return
+		if r.LocatedIn != nil {
+			if err := h.st.checkRegistered(ctx, *r.LocatedIn, initiative); err != nil {
+				h.fail(req, err)
+				return
+			}
+		}
+		if r.Target != nil && *r.Target != "" {
+			if err := h.st.checkTargetLive(ctx, initiative, *r.Target); err != nil {
+				h.fail(req, err)
+				return
+			}
 		}
 	}
 	h.exec(ctx, req, r.ID, func(*contract.Item) (contract.Op, error) {
 		return contract.NewOp(contract.OpEdited, r.ID, r.Actor, contract.EditedPayload{
 			Priority:        r.Priority,
 			Initiative:      r.Initiative,
+			Target:          r.Target,
 			LocatedIn:       r.LocatedIn,
 			DiscoveredWhile: r.DiscoveredWhile,
 			Lands:           r.Lands,
@@ -455,6 +472,101 @@ func (h *handlers) listProjects(req micro.Request) {
 		return
 	}
 	h.respond(req, ps)
+}
+
+func (h *handlers) registerRelease(req micro.Request) {
+	var r client.RegisterReleaseRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpRegistered, r.Initiative+"."+r.Slug, r.Actor, contract.RegisteredPayload{
+		Name:        r.Name,
+		Description: r.Description,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	rel, err := h.st.registerRelease(ctx, op)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, rel)
+}
+
+func (h *handlers) shipRelease(req micro.Request) {
+	var r client.ShipReleaseRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpShipped, r.Initiative+"."+r.Slug, r.Actor, contract.ShippedPayload{
+		Refs: r.Refs,
+		Note: r.Note,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	// The straggler gate runs after the contract check, against the same
+	// snapshot the CAS publish will fence: the cut is the triage pass.
+	rel, err := h.st.execRelease(ctx, op, func(*contract.Release) error {
+		return h.st.checkNoOpenTargets(ctx, r.Initiative, r.Slug)
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, rel)
+}
+
+func (h *handlers) retireRelease(req micro.Request) {
+	var r client.RetireReleaseRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	op, err := contract.NewOp(contract.OpRetired, r.Initiative+"."+r.Slug, r.Actor, contract.RetiredPayload{
+		Reason: r.Reason,
+	})
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	rel, err := h.st.execRelease(ctx, op, nil)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, rel)
+}
+
+func (h *handlers) listReleases(req micro.Request) {
+	var r client.ListReleasesRequest
+	if !decodeInto(req, &r) {
+		return
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+
+	if !contract.ValidInitiativeSlug(r.Initiative) {
+		_ = req.Error("invalid-initiative", "release listing names its initiative", nil)
+		return
+	}
+	rs, err := h.st.listReleases(ctx, r.Initiative)
+	if err != nil {
+		h.fail(req, err)
+		return
+	}
+	h.respond(req, rs)
 }
 
 // exec runs one item command through the store's write path and replies

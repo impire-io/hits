@@ -11,12 +11,15 @@ const (
 // NodeKind classifies a graph node.
 type NodeKind string
 
-// The node kinds. Items, projects, and initiatives have identity in the
-// system; actor nodes exist only by reference.
+// The node kinds. Items, projects, initiatives, and releases have
+// identity in the system; actor nodes exist only by reference. A release
+// node's ID is its op entity, <initiative>.<slug> — release slugs are
+// unique per initiative only.
 const (
 	NodeItem       NodeKind = "item"
 	NodeProject    NodeKind = "project"
 	NodeInitiative NodeKind = "initiative"
+	NodeRelease    NodeKind = "release"
 	NodeActor      NodeKind = "actor"
 )
 
@@ -30,6 +33,7 @@ const (
 	EdgeClaimedBy    = "claimed-by"
 	EdgeBlockedBy    = "blocked-by"
 	EdgeInInitiative = "in-initiative"
+	EdgeTargets      = "targets"
 )
 
 // NodeRef identifies one node; Name is carried on project nodes only, from

@@ -104,6 +104,7 @@ type Item struct {
 	Status          Status    `json:"status"`
 	Priority        Priority  `json:"priority"`
 	Initiative      string    `json:"initiative,omitempty"`
+	Target          string    `json:"target,omitempty"`
 	Report          string    `json:"report"`
 	Reporter        string    `json:"reporter"`
 	Created         time.Time `json:"created"`
@@ -168,3 +169,35 @@ type Initiative struct {
 	RetireReason string `json:"retire-reason,omitempty"`
 	Seq          uint64 `json:"seq"`
 }
+
+// ShipRef is one verifiable reference carried by a release's shipped op:
+// the tag, commit, or artifact that is the release, with an optional note.
+type ShipRef struct {
+	Tag      string `json:"tag,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+	Note     string `json:"note,omitempty"`
+}
+
+// Release is one entry of the third registered vocabulary: a named ship
+// point within an initiative (decision 0017), what an item's target points
+// at. Slugs are unique per initiative, and the lifecycle is
+// register → shipped | retired: shipping completes the release with its
+// evidence, retirement removes a mistyped or abandoned slug from the
+// vocabulary. Both are terminal, both keep the registry key, and neither
+// slug is ever reused.
+type Release struct {
+	Initiative   string    `json:"initiative"`
+	Slug         string    `json:"slug"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	Shipped      bool      `json:"shipped,omitempty"`
+	ShipRefs     []ShipRef `json:"ship-refs,omitempty"`
+	ShipNote     string    `json:"ship-note,omitempty"`
+	Retired      bool      `json:"retired,omitempty"`
+	RetireReason string    `json:"retire-reason,omitempty"`
+	Seq          uint64    `json:"seq"`
+}
+
+// Terminal reports whether the release accepts no further ops.
+func (r *Release) Terminal() bool { return r.Shipped || r.Retired }

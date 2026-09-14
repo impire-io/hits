@@ -37,7 +37,7 @@ func newBleveIndex() (*bleveIndex, error) {
 	doc := bleve.NewDocumentMapping()
 	doc.AddFieldMappingsAt("report", text)
 	doc.AddFieldMappingsAt("notes", text)
-	for _, f := range []string{"type", "status", "priority", "initiative", "located-in"} {
+	for _, f := range []string{"type", "status", "priority", "initiative", "target", "located-in"} {
 		doc.AddFieldMappingsAt(f, kw)
 	}
 	mapping := bleve.NewIndexMapping()
@@ -64,6 +64,7 @@ func docFor(it *contract.Item) map[string]any {
 		"status":     string(it.Status),
 		"priority":   string(it.Priority),
 		"initiative": it.Initiative,
+		"target":     it.Target,
 		"located-in": it.LocatedIn,
 	}
 }
@@ -99,6 +100,11 @@ func (b *bleveIndex) query(r client.SearchRequest) (client.SearchReply, error) {
 		iq := bleve.NewTermQuery(r.Initiative)
 		iq.SetField("initiative")
 		must = append(must, iq)
+	}
+	if r.Target != "" {
+		tq := bleve.NewTermQuery(r.Target)
+		tq.SetField("target")
+		must = append(must, tq)
 	}
 
 	var q query.Query

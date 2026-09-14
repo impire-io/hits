@@ -33,6 +33,11 @@ const (
 	RegisterInitiativeSubject = "hits.api.initiative.register"
 	RetireInitiativeSubject   = "hits.api.initiative.retire"
 	ListInitiativesSubject    = "hits.api.initiative.list"
+
+	RegisterReleaseSubject = "hits.api.release.register"
+	ShipReleaseSubject     = "hits.api.release.ship"
+	RetireReleaseSubject   = "hits.api.release.retire"
+	ListReleasesSubject    = "hits.api.release.list"
 )
 
 // APIError is a service-side rejection. Code is machine-legible: an
@@ -54,6 +59,7 @@ type CreateItemRequest struct {
 	Report          string            `json:"report"`
 	Priority        contract.Priority `json:"priority,omitempty"`
 	Initiative      string            `json:"initiative"`
+	Target          string            `json:"target,omitempty"`
 	LocatedIn       []string          `json:"located-in,omitempty"`
 	DiscoveredWhile string            `json:"discovered-while,omitempty"`
 }
@@ -65,12 +71,14 @@ type GetItemRequest struct {
 
 // EditItemRequest changes properties outside the lifecycle; nil fields stay
 // untouched. Initiative assigns a legacy bare-ID item to an initiative —
-// on prefixed items it is refused (decision 0016).
+// on prefixed items it is refused (decision 0016). Target pointed at the
+// empty string clears the item's target (decision 0017).
 type EditItemRequest struct {
 	Actor           string             `json:"actor"`
 	ID              string             `json:"id"`
 	Priority        *contract.Priority `json:"priority,omitempty"`
 	Initiative      *string            `json:"initiative,omitempty"`
+	Target          *string            `json:"target,omitempty"`
 	LocatedIn       *[]string          `json:"located-in,omitempty"`
 	DiscoveredWhile *string            `json:"discovered-while,omitempty"`
 	Lands           *[]contract.Land   `json:"lands,omitempty"`
@@ -183,6 +191,45 @@ type RetireProjectRequest struct {
 	Reason string `json:"reason"`
 }
 
+// RegisterReleaseRequest adds one entry to the release vocabulary of an
+// initiative (decision 0017): a named ship point, what an item's target
+// points at. Slugs are unique per initiative and may carry dots.
+type RegisterReleaseRequest struct {
+	Actor       string `json:"actor"`
+	Initiative  string `json:"initiative"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ShipReleaseRequest completes a release with its evidence — verifiable
+// refs plus an optional note. Refused (open-targets) while any
+// non-terminal item targets the release: the cut is the triage pass.
+type ShipReleaseRequest struct {
+	Actor      string             `json:"actor"`
+	Initiative string             `json:"initiative"`
+	Slug       string             `json:"slug"`
+	Refs       []contract.ShipRef `json:"refs"`
+	Note       string             `json:"note,omitempty"`
+}
+
+// RetireReleaseRequest removes a mistyped or abandoned release slug from
+// the vocabulary: listings drop it, new targets refuse it, existing
+// targets stand (the audit nets them), and the slug is never reused.
+type RetireReleaseRequest struct {
+	Actor      string `json:"actor"`
+	Initiative string `json:"initiative"`
+	Slug       string `json:"slug"`
+	Reason     string `json:"reason"`
+}
+
+// ListReleasesRequest reads one initiative's release vocabulary: the
+// unshipped working set plus shipped history with its refs; retired
+// slugs are dropped.
+type ListReleasesRequest struct {
+	Initiative string `json:"initiative"`
+}
+
 // CreateItem opens an item and returns its first snapshot.
 func (c *Client) CreateItem(ctx context.Context, r CreateItemRequest) (contract.Item, error) {
 	return request[contract.Item](ctx, c, CreateSubject, r)
@@ -278,6 +325,27 @@ func (c *Client) RetireInitiative(ctx context.Context, r RetireInitiativeRequest
 // ListInitiatives reads the whole initiative vocabulary.
 func (c *Client) ListInitiatives(ctx context.Context) ([]contract.Initiative, error) {
 	return request[[]contract.Initiative](ctx, c, ListInitiativesSubject, struct{}{})
+}
+
+// RegisterRelease adds a release to an initiative's vocabulary.
+func (c *Client) RegisterRelease(ctx context.Context, r RegisterReleaseRequest) (contract.Release, error) {
+	return request[contract.Release](ctx, c, RegisterReleaseSubject, r)
+}
+
+// ShipRelease completes a release with its evidence.
+func (c *Client) ShipRelease(ctx context.Context, r ShipReleaseRequest) (contract.Release, error) {
+	return request[contract.Release](ctx, c, ShipReleaseSubject, r)
+}
+
+// RetireRelease retires a release slug: it leaves the vocabulary and is
+// never reused; history stands.
+func (c *Client) RetireRelease(ctx context.Context, r RetireReleaseRequest) (contract.Release, error) {
+	return request[contract.Release](ctx, c, RetireReleaseSubject, r)
+}
+
+// ListReleases reads one initiative's release vocabulary.
+func (c *Client) ListReleases(ctx context.Context, r ListReleasesRequest) ([]contract.Release, error) {
+	return request[[]contract.Release](ctx, c, ListReleasesSubject, r)
 }
 
 // request round-trips one endpoint call, surfacing service rejections as

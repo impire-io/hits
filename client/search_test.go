@@ -183,3 +183,39 @@ func TestSearchInitiativeFilter(t *testing.T) {
 		t.Errorf("flagless-query initiative filter total = %d, want 1", got)
 	}
 }
+
+// TestSearchTargetFilter: the target is a keyword field beside type,
+// status, and initiative — "what aims at 0.5" is one filtered query
+// (decision 0017).
+func TestSearchTargetFilter(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	startSearch(t, h)
+
+	if _, err := h.c.RegisterRelease(ctx, client.RegisterReleaseRequest{
+		Actor: "daan", Initiative: "hits", Slug: "0.5", Name: "The 0.5 release",
+	}); err != nil {
+		t.Fatalf("register release: %v", err)
+	}
+	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug,
+		Report: "shared target words", Target: "0.5",
+	}); err != nil {
+		t.Fatalf("create targeted: %v", err)
+	}
+	if _, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug, Report: "shared target words",
+	}); err != nil {
+		t.Fatalf("create untargeted: %v", err)
+	}
+
+	waitFor(t, "both items indexed", func() bool {
+		return total(ctx, t, h, client.SearchRequest{Query: "shared"}) == 2
+	})
+	if got := total(ctx, t, h, client.SearchRequest{Query: "shared", Target: "0.5"}); got != 1 {
+		t.Errorf("filtered total = %d, want 1", got)
+	}
+	if got := total(ctx, t, h, client.SearchRequest{Target: "0.5"}); got != 1 {
+		t.Errorf("flagless-query target filter total = %d, want 1", got)
+	}
+}

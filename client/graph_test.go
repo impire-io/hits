@@ -273,3 +273,52 @@ func TestGraphInitiativeNodes(t *testing.T) {
 		}
 	}
 }
+
+// TestGraphReleaseNodes: release nodes materialize through derived
+// targets edges while an item's target is set, named from their
+// registration, and the edge drops when the target clears
+// (decision 0017).
+func TestGraphReleaseNodes(t *testing.T) {
+	h := startStore(t)
+	ctx := testCtx(t)
+	startGraph(t, h)
+
+	if _, err := h.c.RegisterRelease(ctx, client.RegisterReleaseRequest{
+		Actor: "daan", Initiative: "hits", Slug: "0.5", Name: "The 0.5 release",
+	}); err != nil {
+		t.Fatalf("register release: %v", err)
+	}
+	it, err := h.c.CreateItem(ctx, client.CreateItemRequest{
+		Actor: "daan", Initiative: "hits", Type: contract.Bug,
+		Report: "aims at the release", Target: "0.5",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	releaseNode := client.NodeRef{Kind: client.NodeRelease, ID: "hits.0.5"}
+	fromItem := client.NeighborsRequest{Kind: client.NodeItem, ID: it.ID, Direction: "out"}
+	waitFor(t, "targets edge", func() bool {
+		return hasEdge(ctx, t, h, fromItem, client.EdgeTargets, releaseNode)
+	})
+
+	// The release node answers from its side, named from registration.
+	reply, err := h.c.GraphNeighbors(ctx, client.NeighborsRequest{
+		Kind: client.NodeRelease, ID: "hits.0.5", Direction: "in",
+	})
+	if err != nil {
+		t.Fatalf("release neighbors: %v", err)
+	}
+	if len(reply.Edges) != 1 || reply.Edges[0].To.Name != "The 0.5 release" {
+		t.Fatalf("release in-edges = %+v, want the item edge with the registered name", reply.Edges)
+	}
+
+	// Clearing the target drops the edge.
+	empty := ""
+	if _, err := h.c.EditItem(ctx, client.EditItemRequest{Actor: "daan", ID: it.ID, Target: &empty}); err != nil {
+		t.Fatalf("clear target: %v", err)
+	}
+	waitFor(t, "targets edge dropped", func() bool {
+		return !hasEdge(ctx, t, h, fromItem, client.EdgeTargets, releaseNode)
+	})
+}

@@ -29,6 +29,7 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 			Status:          Open,
 			Priority:        prio,
 			Initiative:      p.Initiative,
+			Target:          p.Target,
 			Report:          p.Report,
 			Reporter:        op.Actor,
 			Created:         op.At,
@@ -61,6 +62,9 @@ func Apply(current *Item, op Op, seq uint64) (*Item, error) {
 		}
 		if p.Initiative != nil {
 			it.Initiative = *p.Initiative
+		}
+		if p.Target != nil {
+			it.Target = *p.Target
 		}
 		if p.LocatedIn != nil {
 			it.LocatedIn = append([]string(nil), *p.LocatedIn...)
@@ -176,6 +180,56 @@ func ApplyProject(current *Project, op Op, seq uint64) (*Project, error) {
 		return &next, nil
 	default:
 		return nil, fmt.Errorf("apply: unknown project op %q", op.Op)
+	}
+}
+
+// ApplyRelease folds one release op into a registry entry, with the same
+// idempotence rule as Apply. The entity carries <initiative>.<slug>; the
+// fold trusts CheckReleaseOp validated it at append time.
+func ApplyRelease(current *Release, op Op, seq uint64) (*Release, error) {
+	if current != nil && seq <= current.Seq {
+		return current, nil
+	}
+	switch op.Op {
+	case OpRegistered:
+		initiative, slug, ok := ParseReleaseEntity(op.Entity)
+		if !ok {
+			return nil, fmt.Errorf("apply %s: release entity %q does not parse", op.Op, op.Entity)
+		}
+		var p RegisteredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		return &Release{Initiative: initiative, Slug: slug, Name: p.Name, Description: p.Description, Seq: seq}, nil
+	case OpShipped:
+		if current == nil {
+			return nil, fmt.Errorf("apply %s to release %s: no registration before shipping", op.Op, op.Entity)
+		}
+		var p ShippedPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		next := *current
+		next.Shipped = true
+		next.ShipRefs = append([]ShipRef(nil), p.Refs...)
+		next.ShipNote = p.Note
+		next.Seq = seq
+		return &next, nil
+	case OpRetired:
+		if current == nil {
+			return nil, fmt.Errorf("apply %s to release %s: no registration before retirement", op.Op, op.Entity)
+		}
+		var p RetiredPayload
+		if err := decode(op, &p); err != nil {
+			return nil, err
+		}
+		next := *current
+		next.Retired = true
+		next.RetireReason = p.Reason
+		next.Seq = seq
+		return &next, nil
+	default:
+		return nil, fmt.Errorf("apply: unknown release op %q", op.Op)
 	}
 }
 

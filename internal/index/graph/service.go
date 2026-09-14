@@ -158,6 +158,20 @@ func fold(st store, state *foldState, subject string, op contract.Op, seq uint64
 		// A retired initiative's node materializes only through edges, so
 		// there is nothing to remove; the name mapping stays for history.
 		return
+	case strings.HasPrefix(subject, contract.ReleaseOpsPrefix):
+		if op.Op == contract.OpRegistered {
+			var p contract.RegisteredPayload
+			if err := json.Unmarshal(op.Payload, &p); err != nil {
+				log.Printf("hits-graph: decode registration for release %s: %v", op.Entity, err)
+				return
+			}
+			// The node ID is the op entity, <initiative>.<slug> — release
+			// slugs are unique per initiative only (decision 0017).
+			st.setName(nodeKey{kind: client.NodeRelease, id: op.Entity}, p.Name)
+		}
+		// Shipped and retired release nodes materialize through targets
+		// edges alone; the name mapping stays for history.
+		return
 	case strings.HasPrefix(subject, contract.ProjectOpsPrefix):
 		next, err := contract.ApplyProject(state.projects[op.Entity], op, seq)
 		if err != nil {
@@ -198,6 +212,9 @@ func deriveEdges(it *contract.Item) []edge {
 	}
 	if it.Initiative != "" {
 		edges = append(edges, edge{typ: client.EdgeInInitiative, to: nodeKey{kind: client.NodeInitiative, id: it.Initiative}})
+	}
+	if it.Target != "" && it.Initiative != "" {
+		edges = append(edges, edge{typ: client.EdgeTargets, to: nodeKey{kind: client.NodeRelease, id: it.Initiative + "." + it.Target}})
 	}
 	edges = append(edges, edge{typ: client.EdgeReportedBy, to: nodeKey{kind: client.NodeActor, id: it.Reporter}})
 	if it.Claim != nil {

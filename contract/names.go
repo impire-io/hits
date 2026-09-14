@@ -18,6 +18,11 @@ const (
 	// InitiativeOpsPrefix + slug is the subject an initiative's ops
 	// append to (decision 0016).
 	InitiativeOpsPrefix = "hits.ops.initiative."
+	// ReleaseOpsPrefix + <initiative>.<slug> is the subject a release's
+	// ops append to (decision 0017). The release slug may itself carry
+	// dots — versions do — so the entity is parsed as initiative up to
+	// the first dot (initiative slugs are dot-free), slug thereafter.
+	ReleaseOpsPrefix = "hits.ops.release."
 	// StateBucket holds the state projection — item snapshots, the
 	// located-in vocabulary, and operational keys, all folds of the log,
 	// told apart by key prefix (decision 0012).
