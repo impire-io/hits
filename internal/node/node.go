@@ -64,6 +64,10 @@ func Start(ctx context.Context, nc *nats.Conn, cfg Config) (micro.Service, error
 		{"initiative-register", client.RegisterInitiativeSubject, h.registerInitiative},
 		{"initiative-retire", client.RetireInitiativeSubject, h.retireInitiative},
 		{"initiative-list", client.ListInitiativesSubject, h.listInitiatives},
+		{"release-register", client.RegisterReleaseSubject, h.registerRelease},
+		{"release-ship", client.ShipReleaseSubject, h.shipRelease},
+		{"release-retire", client.RetireReleaseSubject, h.retireRelease},
+		{"release-list", client.ListReleasesSubject, h.listReleases},
 	}
 	for _, e := range endpoints {
 		if err := svc.AddEndpoint(e.name, e.handler, micro.WithEndpointSubject(e.subject)); err != nil {

@@ -24,7 +24,11 @@ const (
 	itemKeyPrefix       = "item."
 	projectKeyPrefix    = "project."
 	initiativeKeyPrefix = "initiative."
-	systemKeyPrefix     = "system."
+	// releaseKeyPrefix + <initiative>.<slug> is one release's registry
+	// entry (decision 0017) — keyed by the op entity, so the per-initiative
+	// uniqueness scope and the key are the same string.
+	releaseKeyPrefix = "release."
+	systemKeyPrefix  = "system."
 	// legacyCounterKey is the pre-0016 bare-ID counter: frozen — replay
 	// still derives it from the legacy range, but no mint advances it.
 	legacyCounterKey = systemKeyPrefix + "item-counter"
@@ -139,6 +143,12 @@ func (s *store) loadInitiative(ctx context.Context, slug string) (*contract.Init
 	return loadSnapshot[contract.Initiative](ctx, s.state, initiativeKeyPrefix+slug)
 }
 
+// loadRelease reads one release's registry entry by its op entity,
+// <initiative>.<slug>.
+func (s *store) loadRelease(ctx context.Context, entity string) (*contract.Release, uint64, error) {
+	return loadSnapshot[contract.Release](ctx, s.state, releaseKeyPrefix+entity)
+}
+
 func loadSnapshot[T any](ctx context.Context, kv jetstream.KeyValue, key string) (*T, uint64, error) {
 	entry, err := kv.Get(ctx, key)
 	if errors.Is(err, jetstream.ErrKeyNotFound) {
@@ -235,6 +245,35 @@ func (s *store) saveInitiative(ctx context.Context, i *contract.Initiative, rev 
 			return nil, lerr
 		}
 		if current != nil && current.Seq >= i.Seq {
+			return current, nil
+		}
+		rev = curRev
+	}
+}
+
+func (s *store) saveRelease(ctx context.Context, r *contract.Release, rev uint64) (*contract.Release, error) {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return nil, fmt.Errorf("encode release %s: %w", r.Slug, err)
+	}
+	key := releaseKeyPrefix + r.Initiative + "." + r.Slug
+	for {
+		if rev == 0 {
+			_, err = s.state.Create(ctx, key, data)
+		} else {
+			_, err = s.state.Update(ctx, key, data, rev)
+		}
+		if err == nil {
+			return r, nil
+		}
+		if !isCASConflict(err) {
+			return nil, fmt.Errorf("write release %s: %w", r.Slug, err)
+		}
+		current, curRev, lerr := s.loadRelease(ctx, r.Initiative+"."+r.Slug)
+		if lerr != nil {
+			return nil, lerr
+		}
+		if current != nil && current.Seq >= r.Seq {
 			return current, nil
 		}
 		rev = curRev
@@ -423,6 +462,20 @@ func (s *store) raiseCounter(ctx context.Context, key string, n uint64) error {
 // retired mean different registries on different subjects.
 func (s *store) foldOne(ctx context.Context, subject string, op contract.Op, seq uint64) error {
 	switch {
+	case strings.HasPrefix(subject, contract.ReleaseOpsPrefix):
+		current, rev, err := s.loadRelease(ctx, op.Entity)
+		if err != nil {
+			return err
+		}
+		if current != nil && seq <= current.Seq {
+			return nil
+		}
+		next, err := contract.ApplyRelease(current, op, seq)
+		if err != nil {
+			return err
+		}
+		_, err = s.saveRelease(ctx, next, rev)
+		return err
 	case strings.HasPrefix(subject, contract.InitiativeOpsPrefix):
 		current, rev, err := s.loadInitiative(ctx, op.Entity)
 		if err != nil {
@@ -732,6 +785,174 @@ func (s *store) listInitiatives(ctx context.Context) ([]contract.Initiative, err
 		}
 		if i != nil && !i.Retired {
 			out = append(out, *i)
+		}
+	}
+	return out, nil
+}
+
+// checkTargetLive rejects a target that names an unregistered or terminal
+// release of the item's initiative — the registry check behind create and
+// edit (decision 0017). Target needs the item's initiative to resolve
+// against; an item that has none assigns it first.
+func (s *store) checkTargetLive(ctx context.Context, initiative, slug string) error {
+	if !contract.ValidReleaseSlug(slug) {
+		return &contract.InvariantError{Name: "invalid-release",
+			Message: fmt.Sprintf("%q is not a well-formed release slug", slug)}
+	}
+	if initiative == "" {
+		return &contract.InvariantError{Name: "initiative-required",
+			Message: "an item targets releases of its own initiative; assign the initiative first"}
+	}
+	r, _, err := s.loadRelease(ctx, initiative+"."+slug)
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return &contract.InvariantError{Name: "unknown-release",
+			Message: fmt.Sprintf("target names %q, which is not a registered release of initiative %s", slug, initiative)}
+	}
+	if r.Shipped {
+		return &contract.InvariantError{Name: "release-shipped",
+			Message: fmt.Sprintf("release %s of initiative %s is shipped", slug, initiative)}
+	}
+	if r.Retired {
+		return &contract.InvariantError{Name: "release-retired",
+			Message: fmt.Sprintf("release %s of initiative %s is retired", slug, initiative)}
+	}
+	return nil
+}
+
+// checkNoOpenTargets is the straggler gate (decision 0017): shipping is
+// refused while any non-terminal item of the release's initiative targets
+// it — the cut is the triage pass, and the offenders are named so the
+// pass knows where to go. A scan over the item snapshots, deliberately:
+// shipping is rare, and no reverse index enters the write model.
+// Tombstoned and terminal items hold nothing hostage.
+func (s *store) checkNoOpenTargets(ctx context.Context, initiative, slug string) error {
+	lister, err := s.state.ListKeysFiltered(ctx, itemKeyPrefix+">")
+	if err != nil {
+		return fmt.Errorf("list items: %w", err)
+	}
+	var open []string
+	for key := range lister.Keys() {
+		it, _, err := s.loadItem(ctx, strings.TrimPrefix(key, itemKeyPrefix))
+		if err != nil {
+			return err
+		}
+		if it == nil || it.Tombstoned || it.Status.Terminal() {
+			continue
+		}
+		if it.Initiative == initiative && it.Target == slug {
+			open = append(open, it.ID)
+		}
+	}
+	if len(open) > 0 {
+		return &contract.InvariantError{Name: "open-targets",
+			Message: fmt.Sprintf("release %s of initiative %s is targeted by open items %s; re-target or clear them — the cut is the triage pass", slug, initiative, strings.Join(open, ", "))}
+	}
+	return nil
+}
+
+// registerRelease validates and appends a release registration into a
+// live initiative; entity uniqueness (per initiative, the entity carries
+// both) is the expected-sequence-zero publish. The entity parse runs
+// before the snapshot load: a malformed slug is an invariant, never a
+// KV error.
+func (s *store) registerRelease(ctx context.Context, op contract.Op) (*contract.Release, error) {
+	initiative, _, ok := contract.ParseReleaseEntity(op.Entity)
+	if !ok {
+		return nil, &contract.InvariantError{Name: "invalid-release",
+			Message: fmt.Sprintf("%q is not <initiative>.<slug> with well-formed slugs", op.Entity)}
+	}
+	current, _, err := s.loadRelease(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckReleaseOp(current, op); err != nil {
+		return nil, err
+	}
+	if err := s.checkInitiativeLive(ctx, initiative); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.ReleaseOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(0))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "already-registered",
+				Message: fmt.Sprintf("release %s is already registered", op.Entity)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyRelease(nil, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveRelease(ctx, next, 0)
+}
+
+// execRelease appends a ship or retire with the vocabulary CAS
+// discipline. Two distinct terminal ops can race on one release, so a
+// lost CAS is reported as contended-write — a retry meets the real
+// invariant against fresh state.
+func (s *store) execRelease(ctx context.Context, op contract.Op, gate func(current *contract.Release) error) (*contract.Release, error) {
+	if _, _, ok := contract.ParseReleaseEntity(op.Entity); !ok {
+		return nil, &contract.InvariantError{Name: "invalid-release",
+			Message: fmt.Sprintf("%q is not <initiative>.<slug> with well-formed slugs", op.Entity)}
+	}
+	current, rev, err := s.loadRelease(ctx, op.Entity)
+	if err != nil {
+		return nil, err
+	}
+	if err := contract.CheckReleaseOp(current, op); err != nil {
+		return nil, err
+	}
+	if gate != nil {
+		if err := gate(current); err != nil {
+			return nil, err
+		}
+	}
+	data, err := json.Marshal(op)
+	if err != nil {
+		return nil, fmt.Errorf("encode op: %w", err)
+	}
+	ack, err := s.js.Publish(ctx, contract.ReleaseOpsPrefix+op.Entity, data,
+		jetstream.WithMsgID(op.ID),
+		jetstream.WithExpectLastSequencePerSubject(current.Seq))
+	if err != nil {
+		if isCASConflict(err) {
+			return nil, &contract.InvariantError{Name: "contended-write",
+				Message: fmt.Sprintf("release %s changed underneath the %s; retry", op.Entity, op.Op)}
+		}
+		return nil, err
+	}
+	next, err := contract.ApplyRelease(current, op, ack.Sequence)
+	if err != nil {
+		return nil, err
+	}
+	return s.saveRelease(ctx, next, rev)
+}
+
+// listReleases reads one initiative's release registry keys: the
+// unshipped working set plus shipped history with its refs. Retired slugs
+// left the vocabulary and are dropped.
+func (s *store) listReleases(ctx context.Context, initiative string) ([]contract.Release, error) {
+	lister, err := s.state.ListKeysFiltered(ctx, releaseKeyPrefix+initiative+".>")
+	if err != nil {
+		return nil, fmt.Errorf("list releases: %w", err)
+	}
+	out := []contract.Release{}
+	for key := range lister.Keys() {
+		r, _, err := s.loadRelease(ctx, strings.TrimPrefix(key, releaseKeyPrefix))
+		if err != nil {
+			return nil, err
+		}
+		if r != nil && !r.Retired {
+			out = append(out, *r)
 		}
 	}
 	return out, nil

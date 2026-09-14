@@ -46,6 +46,7 @@ func (inv *invocation) printItem(it contract.Item) error {
 	}
 	field(w, "blocked-by", it.BlockedBy)
 	field(w, "interrupted", string(it.Interrupted))
+	field(w, "target", it.Target)
 	field(w, "located-in", strings.Join(it.LocatedIn, ", "))
 	field(w, "discovered-while", it.DiscoveredWhile)
 	for _, l := range it.Lands {
@@ -145,6 +146,53 @@ func (inv *invocation) printInitiatives(is []contract.Initiative) error {
 	return tw.Flush()
 }
 
+func (inv *invocation) printRelease(r contract.Release) error {
+	if inv.json {
+		return emit(inv.out, r)
+	}
+	fmt.Fprintf(inv.out, "%s %s  %s\n", r.Initiative, r.Slug, r.Name)
+	field(inv.out, "description", r.Description)
+	for _, ref := range r.ShipRefs {
+		field(inv.out, "shipped", shipRefString(ref))
+	}
+	field(inv.out, "ship-note", r.ShipNote)
+	if r.Retired {
+		field(inv.out, "retired", r.RetireReason)
+	}
+	return nil
+}
+
+func (inv *invocation) printReleases(rs []contract.Release) error {
+	if inv.json {
+		return emit(inv.out, rs)
+	}
+	tw := tabwriter.NewWriter(inv.out, 0, 0, 2, ' ', 0)
+	for _, r := range rs {
+		state := "open"
+		if r.Shipped {
+			state = "shipped"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.Slug, state, r.Name, r.Description)
+	}
+	return tw.Flush()
+}
+
+func shipRefString(r contract.ShipRef) string {
+	var s string
+	switch {
+	case r.Tag != "":
+		s = "tag:" + r.Tag
+	case r.Commit != "":
+		s = "commit:" + r.Commit
+	case r.Artifact != "":
+		s = "artifact:" + r.Artifact
+	}
+	if r.Note != "" {
+		s += " — " + r.Note
+	}
+	return s
+}
+
 // searchRow pairs one search hit with its item snapshot. A nil item is a hit
 // whose snapshot vanished between the search and the get (a tombstone race):
 // the row keeps its id and score, its item cells stay blank.
@@ -206,6 +254,7 @@ func columnRegistry() []col {
 		})},
 		{"blocked-by", itemCol(func(it *contract.Item) string { return it.BlockedBy })},
 		{"interrupted", itemCol(func(it *contract.Item) string { return string(it.Interrupted) })},
+		{"target", itemCol(func(it *contract.Item) string { return it.Target })},
 		{"located-in", itemCol(func(it *contract.Item) string { return strings.Join(it.LocatedIn, ", ") })},
 		{"discovered-while", itemCol(func(it *contract.Item) string { return it.DiscoveredWhile })},
 		{"lands", itemCol(func(it *contract.Item) string {

@@ -46,6 +46,9 @@ Vocabulary and queries:
               retire <slug> --reason <r> | list | select <slug>
   project     the located-in vocabulary: register <slug> <name> --initiative <i> |
               assign <slug> --initiative <i> | retire <slug> --reason <r> | list
+  release     the target vocabulary: register <slug> <name> |
+              ship <slug> --ref <kind:ref> | retire <slug> --reason <r> | list
+              (per initiative; 'release <id>' still hands a claim back)
   search      full-text over reports and notes: search [<query>] [flags]
   semantic    nearest items to a text: semantic <text> [--limit <n>]
   graph       edges at a node: neighbors <id> | walk <id>  [flags]
@@ -136,7 +139,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 	case "claim":
 		return runClaim(inv)
 	case "release":
-		return runRelease(inv)
+		return runReleaseCmd(inv)
 	case "block":
 		return runBlock(inv)
 	case "unblock":

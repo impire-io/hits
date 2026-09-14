@@ -146,8 +146,8 @@ func guardConnector(t *testing.T) mcp.Connector {
 	}
 }
 
-// TestToolList pins the surface: exactly the design's nineteen tools, the
-// six query tools read-only.
+// TestToolList pins the surface: exactly the design's tools, one per
+// client endpoint, the query and list tools read-only.
 func TestToolList(t *testing.T) {
 	h := startStore(t)
 	cs := session(t, h, "daan")
@@ -160,11 +160,13 @@ func TestToolList(t *testing.T) {
 	want := []string{
 		"assign_project", "block_item", "claim_item", "create_item",
 		"edit_item", "get_item", "graph_neighbors", "graph_walk",
-		"link_items", "list_initiatives", "list_projects", "note_item",
-		"register_initiative", "register_project", "release_item",
-		"retire_initiative", "retire_project", "search_items",
-		"semantic_search", "tombstone_item", "transition_item",
-		"unblock_item", "unlink_items",
+		"link_items", "list_initiatives", "list_projects",
+		"list_releases", "note_item", "register_initiative",
+		"register_project", "register_release", "release_item",
+		"retire_initiative", "retire_project", "retire_release",
+		"search_items", "semantic_search", "ship_release",
+		"tombstone_item", "transition_item", "unblock_item",
+		"unlink_items",
 	}
 	var got []string
 	readOnly := map[string]bool{}
@@ -177,7 +179,7 @@ func TestToolList(t *testing.T) {
 		t.Errorf("tool list = %v, want %v", got, want)
 	}
 
-	wantReadOnly := []string{"get_item", "graph_neighbors", "graph_walk", "list_initiatives", "list_projects", "search_items", "semantic_search"}
+	wantReadOnly := []string{"get_item", "graph_neighbors", "graph_walk", "list_initiatives", "list_projects", "list_releases", "search_items", "semantic_search"}
 	for _, name := range want {
 		if wantRO := slices.Contains(wantReadOnly, name); readOnly[name] != wantRO {
 			t.Errorf("tool %s read-only = %v, want %v", name, readOnly[name], wantRO)
@@ -553,5 +555,64 @@ func TestInitiativeTools(t *testing.T) {
 	}
 	if i := decode[contract.Initiative](t, res); !i.Retired {
 		t.Errorf("retired initiative = %+v", i)
+	}
+}
+
+// TestReleaseTools rounds the four 0017 tools over the wire: register a
+// release, target items at it, the straggler gate refusing the ship, the
+// clear that lets it through, and the list carrying shipped history.
+func TestReleaseTools(t *testing.T) {
+	h := startStore(t)
+	cs := session(t, h, "daan")
+
+	res := call(t, cs, "register_release", map[string]any{"initiative": "hits", "slug": "0.5", "name": "The 0.5 release"})
+	if res.IsError {
+		t.Fatalf("register_release: %s", resultText(res))
+	}
+	if r := decode[contract.Release](t, res); r.Slug != "0.5" || r.Initiative != "hits" {
+		t.Errorf("registered release = %+v", r)
+	}
+
+	item := callItem(t, cs, "create_item", map[string]any{"type": "bug", "report": "aims at 0.5", "target": "0.5"})
+	if item.Target != "0.5" {
+		t.Errorf("created target = %q", item.Target)
+	}
+
+	res = call(t, cs, "ship_release", map[string]any{
+		"initiative": "hits", "slug": "0.5",
+		"refs": []map[string]any{{"tag": "v0.5.0"}},
+	})
+	if !res.IsError || !strings.Contains(resultText(res), "open-targets") {
+		t.Fatalf("ship with straggler = %v (%s), want the open-targets refusal", res.IsError, resultText(res))
+	}
+
+	item = callItem(t, cs, "edit_item", map[string]any{"id": item.ID, "target": ""})
+	if item.Target != "" {
+		t.Errorf("cleared target = %q", item.Target)
+	}
+
+	res = call(t, cs, "ship_release", map[string]any{
+		"initiative": "hits", "slug": "0.5",
+		"refs": []map[string]any{{"tag": "v0.5.0", "note": "the evidence"}},
+		"note": "cut clean",
+	})
+	if res.IsError {
+		t.Fatalf("ship_release: %s", resultText(res))
+	}
+	if r := decode[contract.Release](t, res); !r.Shipped || len(r.ShipRefs) != 1 || r.ShipRefs[0].Tag != "v0.5.0" {
+		t.Errorf("shipped release = %+v", r)
+	}
+
+	res = call(t, cs, "list_releases", map[string]any{"initiative": "hits"})
+	if res.IsError {
+		t.Fatalf("list_releases: %s", resultText(res))
+	}
+	if rs := decode[[]contract.Release](t, res); len(rs) != 1 || !rs[0].Shipped {
+		t.Errorf("release list = %+v", rs)
+	}
+
+	res = call(t, cs, "retire_release", map[string]any{"initiative": "hits", "slug": "0.5", "reason": "no"})
+	if !res.IsError || !strings.Contains(resultText(res), "release-shipped") {
+		t.Errorf("retire shipped = %v (%s), want release-shipped", res.IsError, resultText(res))
 	}
 }

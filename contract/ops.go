@@ -11,10 +11,11 @@ import (
 // OpType names what happened. Ops are semantic — never "state is now X".
 type OpType string
 
-// The op catalog. OpRegistered and OpRetired apply to projects and
-// initiatives alike — consumers dispatch on the subject kind, never the
-// op type alone (02-DESIGN/ops-log.md § subjects); OpAssigned applies to
-// projects; everything else applies to items.
+// The op catalog. OpRegistered and OpRetired apply to projects,
+// initiatives, and releases alike — consumers dispatch on the subject
+// kind, never the op type alone (02-DESIGN/ops-log.md § subjects);
+// OpAssigned applies to projects; OpShipped applies to releases;
+// everything else applies to items.
 const (
 	OpCreated      OpType = "created"
 	OpNoted        OpType = "noted"
@@ -30,6 +31,7 @@ const (
 	OpRegistered   OpType = "registered"
 	OpAssigned     OpType = "assigned"
 	OpRetired      OpType = "retired"
+	OpShipped      OpType = "shipped"
 )
 
 // EnvelopeVersion is the current op envelope schema version.
@@ -78,6 +80,7 @@ type CreatedPayload struct {
 	Report          string   `json:"report"`
 	Priority        Priority `json:"priority,omitempty"`
 	Initiative      string   `json:"initiative,omitempty"`
+	Target          string   `json:"target,omitempty"`
 	LocatedIn       []string `json:"located-in,omitempty"`
 	DiscoveredWhile string   `json:"discovered-while,omitempty"`
 }
@@ -90,9 +93,11 @@ type NotedPayload struct {
 // EditedPayload changes properties outside the lifecycle. Nil fields are
 // left untouched. Initiative is legal only on legacy bare-ID items — on a
 // prefixed item the initiative is immutable in the ID (decision 0016).
+// Target set to the empty string clears the item's target (decision 0017).
 type EditedPayload struct {
 	Priority        *Priority `json:"priority,omitempty"`
 	Initiative      *string   `json:"initiative,omitempty"`
+	Target          *string   `json:"target,omitempty"`
 	LocatedIn       *[]string `json:"located-in,omitempty"`
 	DiscoveredWhile *string   `json:"discovered-while,omitempty"`
 	Lands           *[]Land   `json:"lands,omitempty"`
@@ -150,8 +155,17 @@ type AssignedPayload struct {
 	Initiative string `json:"initiative"`
 }
 
-// RetiredPayload retires a project or an initiative: the slug leaves its
-// vocabulary, history stands, and the slug is never reused.
+// RetiredPayload retires a project, an initiative, or a release: the slug
+// leaves its vocabulary, history stands, and the slug is never reused.
 type RetiredPayload struct {
 	Reason string `json:"reason"`
+}
+
+// ShippedPayload completes a release with its evidence: verifiable refs —
+// tag, commit, artifact — plus an optional note, the way a resolving
+// transition carries fixed-by (decision 0017). Terminal: a shipped
+// release accepts no further ops.
+type ShippedPayload struct {
+	Refs []ShipRef `json:"refs"`
+	Note string    `json:"note,omitempty"`
 }

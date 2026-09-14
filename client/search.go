@@ -16,6 +16,7 @@ type SearchRequest struct {
 	Type       contract.Type   `json:"type,omitempty"`
 	Status     contract.Status `json:"status,omitempty"`
 	Initiative string          `json:"initiative,omitempty"`
+	Target     string          `json:"target,omitempty"`
 	Limit      int             `json:"limit,omitempty"`  // default 10, capped at 100
 	Offset     int             `json:"offset,omitempty"` // for paging
 }

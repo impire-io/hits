@@ -28,6 +28,7 @@ func runCreate(inv *invocation) error {
 	typ := fs.String("type", "", "item type: bug, task, or improvement")
 	priority := fs.String("priority", "", "triage signal: high, normal, or low")
 	initiative := fs.String("initiative", "", "initiative the ID mints from (default: $HITS_INITIATIVE, else the selected initiative)")
+	target := fs.String("target", "", "the release the item aims at (a release slug of its initiative)")
 	var projects multiFlag
 	fs.Var(&projects, "project", "located-in project slug (repeatable)")
 	discovered := fs.String("discovered-while", "", "the context the item was noticed in")
@@ -58,6 +59,7 @@ func runCreate(inv *invocation) error {
 		Report:          fs.Arg(0),
 		Priority:        contract.Priority(*priority),
 		Initiative:      init,
+		Target:          *target,
 		LocatedIn:       projects,
 		DiscoveredWhile: *discovered,
 	})
@@ -112,6 +114,7 @@ func runEdit(inv *invocation) error {
 	fs := inv.flagSet("edit", "edit <id> [flags]")
 	priority := fs.String("priority", "", "triage signal: high, normal, or low")
 	initiative := fs.String("initiative", "", "assign a legacy bare-ID item to an initiative")
+	target := fs.String("target", "", "the release the item aims at (\"\" clears)")
 	var projects multiFlag
 	fs.Var(&projects, "project", "located-in project slug (repeatable, replaces the list)")
 	discovered := fs.String("discovered-while", "", "the context the item was noticed in (\"\" clears)")
@@ -140,6 +143,8 @@ func runEdit(inv *invocation) error {
 			req.Priority = &p
 		case "initiative":
 			req.Initiative = initiative
+		case "target":
+			req.Target = target
 		case "project":
 			locs := []string(projects)
 			req.LocatedIn = &locs
@@ -157,7 +162,7 @@ func runEdit(inv *invocation) error {
 	if parseErr != nil {
 		return parseErr
 	}
-	if req.Priority == nil && req.Initiative == nil && req.LocatedIn == nil && req.DiscoveredWhile == nil && req.Lands == nil {
+	if req.Priority == nil && req.Initiative == nil && req.Target == nil && req.LocatedIn == nil && req.DiscoveredWhile == nil && req.Lands == nil {
 		return errors.New("edit: nothing to change")
 	}
 

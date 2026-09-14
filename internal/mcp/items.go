@@ -23,6 +23,7 @@ type createItemIn struct {
 	Report          string            `json:"report" jsonschema:"the symptom in plain terms"`
 	Priority        contract.Priority `json:"priority,omitempty" jsonschema:"triage signal: high, normal, or low (default normal)"`
 	Initiative      string            `json:"initiative,omitempty" jsonschema:"initiative the ID mints from (default: the server's startup initiative)"`
+	Target          string            `json:"target,omitempty" jsonschema:"the release the item aims at: a release slug of its initiative; absent means someday"`
 	LocatedIn       []string          `json:"located-in,omitempty" jsonschema:"registered project slugs; required for a task"`
 	DiscoveredWhile string            `json:"discovered-while,omitempty" jsonschema:"the context the item was noticed in"`
 }
@@ -31,6 +32,7 @@ type editItemIn struct {
 	ID              string             `json:"id" jsonschema:"the item's id"`
 	Priority        *contract.Priority `json:"priority,omitempty" jsonschema:"triage signal: high, normal, or low"`
 	Initiative      *string            `json:"initiative,omitempty" jsonschema:"assign a legacy bare-ID item to an initiative"`
+	Target          *string            `json:"target,omitempty" jsonschema:"the release the item aims at; empty clears"`
 	LocatedIn       *[]string          `json:"located-in,omitempty" jsonschema:"registered project slugs; replaces the list"`
 	DiscoveredWhile *string            `json:"discovered-while,omitempty" jsonschema:"the context the item was noticed in; empty clears"`
 	Lands           *[]contract.Land   `json:"lands,omitempty" jsonschema:"cross-repo landing order; empty list clears"`
@@ -98,6 +100,30 @@ type retireProjectIn struct {
 	Reason string `json:"reason" jsonschema:"why the slug leaves the vocabulary"`
 }
 
+type registerReleaseIn struct {
+	Initiative  string `json:"initiative" jsonschema:"the release's initiative"`
+	Slug        string `json:"slug" jsonschema:"chosen slug, unique per initiative; dots allowed (versions)"`
+	Name        string `json:"name" jsonschema:"display name"`
+	Description string `json:"description,omitempty" jsonschema:"what the release is"`
+}
+
+type shipReleaseIn struct {
+	Initiative string             `json:"initiative" jsonschema:"the release's initiative"`
+	Slug       string             `json:"slug" jsonschema:"the release's slug"`
+	Refs       []contract.ShipRef `json:"refs" jsonschema:"verifiable refs: tag, commit, or artifact, each with an optional note"`
+	Note       string             `json:"note,omitempty" jsonschema:"optional note on the ship"`
+}
+
+type retireReleaseIn struct {
+	Initiative string `json:"initiative" jsonschema:"the release's initiative"`
+	Slug       string `json:"slug" jsonschema:"the release's slug"`
+	Reason     string `json:"reason" jsonschema:"why the slug leaves the vocabulary"`
+}
+
+type listReleasesIn struct {
+	Initiative string `json:"initiative" jsonschema:"the initiative whose releases to list"`
+}
+
 type emptyIn struct{}
 
 func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
@@ -109,7 +135,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 			}
 			item, err := c.CreateItem(ctx, client.CreateItemRequest{
 				Actor: actor, Type: in.Type, Report: in.Report, Priority: in.Priority,
-				Initiative: init, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile,
+				Initiative: init, Target: in.Target, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile,
 			})
 			return nil, item, err
 		})
@@ -124,7 +150,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 		func(ctx context.Context, _ *sdk.CallToolRequest, in editItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			item, err := c.EditItem(ctx, client.EditItemRequest{
 				Actor: actor, ID: in.ID, Priority: in.Priority, Initiative: in.Initiative,
-				LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile, Lands: in.Lands,
+				Target: in.Target, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile, Lands: in.Lands,
 			})
 			return nil, item, err
 		})
@@ -237,5 +263,35 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 		func(ctx context.Context, _ *sdk.CallToolRequest, _ emptyIn) (*sdk.CallToolResult, []contract.Initiative, error) {
 			is, err := c.ListInitiatives(ctx)
 			return nil, is, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "register_release", Description: "Add a release — a named ship point items target — to an initiative's vocabulary."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in registerReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
+			r, err := c.RegisterRelease(ctx, client.RegisterReleaseRequest{
+				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Name: in.Name, Description: in.Description,
+			})
+			return nil, r, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "ship_release", Description: "Complete a release with its evidence. Refused (open-targets) while any non-terminal item targets it — re-target or clear the stragglers first; the cut is the triage pass."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in shipReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
+			r, err := c.ShipRelease(ctx, client.ShipReleaseRequest{
+				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Refs: in.Refs, Note: in.Note,
+			})
+			return nil, r, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "retire_release", Description: "Retire a release: the slug leaves the vocabulary and is never reused; history stands."},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in retireReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
+			r, err := c.RetireRelease(ctx, client.RetireReleaseRequest{
+				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Reason: in.Reason,
+			})
+			return nil, r, err
+		})
+
+	sdk.AddTool(s, &sdk.Tool{Name: "list_releases", Description: "Read one initiative's release vocabulary: unshipped releases plus shipped history; retired slugs are dropped.", Annotations: readOnly},
+		func(ctx context.Context, _ *sdk.CallToolRequest, in listReleasesIn) (*sdk.CallToolResult, []contract.Release, error) {
+			rs, err := c.ListReleases(ctx, client.ListReleasesRequest{Initiative: in.Initiative})
+			return nil, rs, err
 		})
 }

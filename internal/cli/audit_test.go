@@ -323,3 +323,36 @@ func TestAuditFanIsConfigurable(t *testing.T) {
 	}
 	wantContains(t, out, "audited 2 items")
 }
+
+// TestAuditTargetNet: the walk nets the release invariants (decision
+// 0017) — a stray target left by guardless retirement fails as
+// target-unknown, and a clean corpus stays green.
+func TestAuditTargetNet(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	t.Setenv("HITS_ACTOR", "daan")
+	repo := newGitRepo(t, "impire-io/hits")
+
+	run(t, connect, "release", "register", "0.5", "The 0.5 release")
+	a := itemID(t, run(t, connect, "create", "--type", "bug", "--target", "0.5", "aims at 0.5"))
+
+	out, err := auditOut(t, connect, "audit", "--repo", "hits="+repo.path)
+	if err != nil {
+		t.Fatalf("clean audit failed: %v\n%s", err, out)
+	}
+
+	// Guardless retirement leaves the stray standing; the net catches it.
+	run(t, connect, "release", "retire", "0.5", "--reason", "mistyped")
+	out, err = auditOut(t, connect, "audit", "--repo", "hits="+repo.path)
+	if err == nil {
+		t.Fatalf("audit with a stray target passed:\n%s", out)
+	}
+	wantContains(t, out, "target-unknown", a, "0.5", "1 failed")
+
+	// Re-targeting nothing (the clear) restores green.
+	run(t, connect, "edit", a, "--target", "")
+	out, err = auditOut(t, connect, "audit", "--repo", "hits="+repo.path)
+	if err != nil {
+		t.Fatalf("audit after the clear failed: %v\n%s", err, out)
+	}
+}

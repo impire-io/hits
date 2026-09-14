@@ -16,6 +16,7 @@ func runSearch(inv *invocation) error {
 	typ := fs.String("type", "", "filter by item type")
 	status := fs.String("status", "", "filter by status")
 	initiative := fs.String("initiative", "", "filter by initiative")
+	targetFlag := fs.String("target", "", "filter by target release slug")
 	limit := fs.Int("limit", 0, "page size (service default 10, capped at 100)")
 	offset := fs.Int("offset", 0, "page start")
 	var columns multiFlag
@@ -51,6 +52,7 @@ func runSearch(inv *invocation) error {
 		Type:       contract.Type(*typ),
 		Status:     contract.Status(*status),
 		Initiative: *initiative,
+		Target:     *targetFlag,
 		Limit:      *limit,
 		Offset:     *offset,
 	})

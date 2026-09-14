@@ -75,10 +75,37 @@ func runAudit(inv *invocation) error {
 	if err != nil {
 		return err
 	}
+	releases, err := loadReleases(inv.ctx, c)
+	if err != nil {
+		return err
+	}
 
 	findings := auditRefs(items, repos, *initiative)
 	findings = append(findings, auditMerges(items, repos, *initiative)...)
+	findings = append(findings, auditTargets(items, releases, *initiative)...)
 	return inv.printAudit(findings, len(items), len(repos))
+}
+
+// loadReleases reads every live initiative's release vocabulary, keyed by
+// <initiative>.<slug> — the net the target audit checks against. Retired
+// releases are not listed, so a stray target on one reads as unknown,
+// which is exactly the stray guardless retirement leaves (decision 0017).
+func loadReleases(ctx context.Context, c *client.Client) (map[string]contract.Release, error) {
+	initiatives, err := c.ListInitiatives(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list initiatives: %w", err)
+	}
+	releases := map[string]contract.Release{}
+	for _, i := range initiatives {
+		rs, err := c.ListReleases(ctx, client.ListReleasesRequest{Initiative: i.Slug})
+		if err != nil {
+			return nil, fmt.Errorf("list releases of %s: %w", i.Slug, err)
+		}
+		for _, r := range rs {
+			releases[r.Initiative+"."+r.Slug] = r
+		}
+	}
+	return releases, nil
 }
 
 // repoEvidence is one clone's git truth, read once: the ref audited
@@ -383,6 +410,35 @@ func auditMerges(items []contract.Item, repos map[string]*repoEvidence, initiati
 					Item: id, Repo: slug, Ref: s,
 					Detail: fmt.Sprintf("item %s is %s, and merged work must not leave its item open", id, it.Status)})
 			}
+		}
+	}
+	return findings
+}
+
+// auditTargets nets the release invariants over the walked corpus
+// (decision 0017): a non-terminal item's target must name a live,
+// unshipped release of its own initiative. Write-time checks enforce
+// this; the audit catches what slips past them — replay drift, and the
+// strays guardless retirement deliberately leaves behind.
+func auditTargets(items []contract.Item, releases map[string]contract.Release, initiative string) []finding {
+	findings := []finding{}
+	for _, it := range items {
+		if it.Tombstoned || it.Status.Terminal() || it.Target == "" {
+			continue
+		}
+		if initiative != "" && it.Initiative != initiative {
+			continue
+		}
+		r, ok := releases[it.Initiative+"."+it.Target]
+		switch {
+		case !ok:
+			findings = append(findings, finding{Level: "fail", Kind: "target-unknown",
+				Item: it.ID, Ref: "target:" + it.Target,
+				Detail: fmt.Sprintf("targets %q, which is not in initiative %s's release vocabulary (unregistered or retired) — re-target or clear it", it.Target, it.Initiative)})
+		case r.Shipped:
+			findings = append(findings, finding{Level: "fail", Kind: "target-terminal",
+				Item: it.ID, Ref: "target:" + it.Target,
+				Detail: fmt.Sprintf("open item targets shipped release %s of %s — the straggler gate should have made this impossible", it.Target, it.Initiative)})
 		}
 	}
 	return findings
