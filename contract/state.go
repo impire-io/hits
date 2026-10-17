@@ -288,6 +288,15 @@ func ItemOperation(op Op) (string, error) {
 	case OpNoted:
 		return "note", nil
 	case OpEdited:
+		// The legacy backfill — the initiative and nothing else — is the
+		// store's assign, which a closed item still admits (the-store.md).
+		var p EditedPayload
+		if err := decode(op, &p); err != nil {
+			return "", err
+		}
+		if initiativeOnlyEdit(p) {
+			return "assign", nil
+		}
 		return "edit", nil
 	case OpTransitioned:
 		return "transition", nil

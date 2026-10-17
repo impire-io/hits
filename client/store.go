@@ -113,7 +113,9 @@ func TypeDeclarations() []TypeDeclaration {
 				"mint":   op(`{"type":"object","required":["next"],"properties":{"next":{"type":"integer","minimum":1}}}`, merge, nil),
 			}}},
 		{contract.TypeProject, chron.TypeDefinition{
-			Schema: json.RawMessage(`{"type":"object","required":["slug","name","initiative"]}`), History: full,
+			// A legacy project was registered before initiatives existed and
+			// assigned one later: the initiative is state, not a requirement.
+			Schema: vocab, History: full,
 			Operations: map[string]ccontract.OpDef{
 				"create": op(anyObject, merge, json.RawMessage(createOnly)),
 				"assign": op(`{"type":"object","required":["initiative"]}`, merge, json.RawMessage(notRetired)),
@@ -202,7 +204,9 @@ func Init(ctx context.Context, cc *chron.Client, store, version string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := cc.Create(ctx, store, AnnouncementPath, "create", data, chron.Verified()); err != nil && !errors.Is(err, chron.ErrInstanceExists) {
+	// Announced already: the create-only guard, or the create's own
+	// precondition at pre-flight, says so.
+	if _, err := cc.Create(ctx, store, AnnouncementPath, "create", data, chron.Verified()); err != nil && !errors.Is(err, chron.ErrInstanceExists) && !errors.Is(err, chron.ErrPreconditionFailed) {
 		return fmt.Errorf("announce: %w", err)
 	}
 	return nil

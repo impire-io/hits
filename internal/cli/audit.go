@@ -20,7 +20,7 @@ import (
 // its item open. Contradictions fail the command; refs the mapping cannot
 // check only warn.
 func runAudit(inv *invocation) error {
-	fs := inv.flagSet("audit", "audit --repo <slug>=<path> [--repo ...] [--initiative <i>] [--fan <n>]")
+	fs := inv.flagSet("audit", "audit [--repo <slug>=<path> ...] [--since-seq <n>] [--initiative <i>] [--fan <n>]")
 	var mappings multiFlag
 	fs.Var(&mappings, "repo", "project slug and its local clone, <slug>=<path> (repeatable)")
 	initiative := fs.String("initiative", "", "narrow the tracker side to one initiative")
@@ -32,7 +32,8 @@ func runAudit(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	if len(mappings) == 0 {
+	// The cutover's read stands on its own; the git evidence needs a clone.
+	if len(mappings) == 0 && *sinceSeq == 0 {
 		fs.Usage()
 		return errors.New("audit: at least one --repo <slug>=<path> mapping is required")
 	}
@@ -81,8 +82,11 @@ func runAudit(inv *invocation) error {
 		return err
 	}
 
-	findings := auditRefs(items, repos, *initiative)
-	findings = append(findings, auditMerges(items, repos, *initiative)...)
+	findings := []finding{}
+	if len(repos) > 0 {
+		findings = append(findings, auditRefs(items, repos, *initiative)...)
+		findings = append(findings, auditMerges(items, repos, *initiative)...)
+	}
 	findings = append(findings, auditTargets(items, releases, *initiative)...)
 	findings = append(findings, auditGaps(items, *initiative)...)
 	if *sinceSeq > 0 {

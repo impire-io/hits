@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/cli"
 )
 
@@ -343,4 +345,32 @@ func TestAuditTargetNet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit after the clear failed: %v\n%s", err, out)
 	}
+}
+
+// TestAuditSinceSeqAlone: the cutover's read needs no clone — every write
+// after the cutover's sequence that chronicle did not vouch for fails the
+// audit, and the client's own writes, all vouched for, pass it.
+func TestAuditSinceSeqAlone(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	run(t, connect, "create", "--type", "bug", "one symptom")
+	run(t, connect, "create", "--type", "bug", "another symptom")
+
+	out, err := auditOut(t, connect, "audit", "--since-seq", "1")
+	if err != nil {
+		t.Fatalf("since-seq alone: %v\n%s", err, out)
+	}
+	wantContains(t, out, "audited 2 items")
+
+	// A direct publish nobody vouched for — the shape of an import — lands
+	// after the cutover's sequence and is reported.
+	data, _ := json.Marshal(map[string]any{"text": "nobody vouched"})
+	if _, err := h.cc.Apply(testCtx(t), chronicletest.Store, contract.ItemPath("hits-1"), "note", data); err != nil {
+		t.Fatal(err)
+	}
+	out, err = auditOut(t, connect, "audit", "--since-seq", "1")
+	if err == nil {
+		t.Fatalf("an unvouched write must fail the audit\n%s", out)
+	}
+	wantContains(t, out, "unverified-write")
 }

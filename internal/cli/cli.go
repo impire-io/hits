@@ -52,7 +52,8 @@ Vocabulary and queries:
 
 Audit (git as evidence, the tracker as the record):
   audit       hold fixed-by refs and merged work against local clones'
-              main: audit --repo <slug>=<path> [--repo ...] [--since-seq <n>]
+              main, and the writes since the cutover against chronicle's
+              word: audit [--repo <slug>=<path> ...] [--since-seq <n>]
 
 The store (a HITS is one store in a chronicle account):
   store       declare a HITS in the context's account: store init [--version <v>] |
