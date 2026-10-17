@@ -9,10 +9,9 @@ linters:
     - depguard
   settings:
     depguard:
-      # The service boundary (specs/001-item-store-core): contract is the one
-      # shared package and imports no other hits package; client imports only
-      # contract; services share through contract, never through each other.
-      # Each new service adds a rule here denying the other services' trees.
+      # The boundary (specs/017-on-chronicle): contract is the one shared
+      # package and imports no other hits package; client imports only
+      # contract (and chronicle's client); the adapters speak the client.
       rules:
         contract-is-a-leaf:
           files: ["**/contract/*.go", "!$test"]
@@ -24,149 +23,44 @@ linters:
           deny:
             - pkg: github.com/impire-io/hits/internal
               desc: the client package is the wire surface; it never reaches into a service
-        node-stands-alone:
-          files: ["**/internal/node/**", "!$test"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/index
-              desc: services never import each other; share through the contract package
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: services never import the adapters
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: services never import the adapters
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: services never import the composition root
-            - pkg: github.com/impire-io/hits/internal/connect
-              desc: services never import the bootstrap; their mains do the connecting
-        index-services-stand-alone:
-          files: ["**/internal/index/**", "!$test"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: services never import each other; share through the contract package
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: services never import the adapters
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: services never import the adapters
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: services never import the composition root
-            - pkg: github.com/impire-io/hits/internal/connect
-              desc: services never import the bootstrap; their mains do the connecting
         adapters-speak-client-only:
           files: ["**/internal/cli/**", "**/internal/mcp/**", "!$test"]
           deny:
             - pkg: github.com/impire-io/hits/internal/node
-              desc: adapters reach the fleet through the client package, never a service's internals
+              desc: there is no fleet; adapters speak the client package
             - pkg: github.com/impire-io/hits/internal/index
-              desc: adapters reach the fleet through the client package, never a service's internals
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: adapters stay clients; the composition root is dispatched from cmd/hits
-        # The shared bootstrap (specs/008-idp-auth): internal/connect is the
-        # one seam every binary connects through — importable from the
-        # adapters, the composition root, and cmd/ mains; it imports no hits
-        # tree back.
-        connect-is-shared-bootstrap:
-          files: ["**/internal/connect/**", "!$test"]
+              desc: there is no fleet; adapters speak the client package
+        cli-and-mcp-stand-apart:
+          files: ["**/internal/cli/**", "!$test"]
           deny:
-            - pkg: github.com/impire-io/hits/client
-              desc: the bootstrap opens connections; speaking over them is a client's job
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: the bootstrap imports no service internals
-            - pkg: github.com/impire-io/hits/internal/index
-              desc: the bootstrap imports no service internals
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: the bootstrap never imports the adapters
             - pkg: github.com/impire-io/hits/internal/mcp
-              desc: the bootstrap never imports the adapters
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: the bootstrap never imports the composition root
-        # The composition root (specs/007-hits-up): internal/fleet calls the
-        # services' Start entrypoints and nothing else reaches it back.
-        fleet-composes-the-services:
-          files: ["**/internal/fleet/**", "!$test"]
+              desc: the two adapters share the client, never each other
+        mcp-and-cli-stand-apart:
+          files: ["**/internal/mcp/**", "!$test"]
           deny:
-            - pkg: github.com/impire-io/hits/client
-              desc: the composition root starts services; speaking to them is a client's job
             - pkg: github.com/impire-io/hits/internal/cli
-              desc: the composition root never imports the adapters
+              desc: the two adapters share the client, never each other
+        # The connection seam and the fleet-era contexts open connections;
+        # speaking over them is a client's job.
+        seams-open-connections-only:
+          files: ["**/internal/dial/**", "**/internal/connect/**", "!$test"]
+          deny:
+            - pkg: github.com/impire-io/hits/internal/cli
+              desc: a seam never imports the adapters
             - pkg: github.com/impire-io/hits/internal/mcp
-              desc: the composition root never imports the adapters
+              desc: a seam never imports the adapters
         # cmd/ is not an unconstrained zone: each main is pinned to its own
-        # tree (specs/007-hits-up FR-06).
-        cmd-hits-runs-client-and-composition:
+        # adapter.
+        cmd-hits-runs-the-cli:
           files: ["**/cmd/hits/*.go"]
           deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: cmd/hits reaches the services only through internal/fleet
-            - pkg: github.com/impire-io/hits/internal/index
-              desc: cmd/hits reaches the services only through internal/fleet
             - pkg: github.com/impire-io/hits/internal/mcp
               desc: the MCP server has its own main
         cmd-hits-mcp-runs-its-adapter:
           files: ["**/cmd/hits-mcp/*.go"]
           deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: this main runs internal/mcp and nothing else
-            - pkg: github.com/impire-io/hits/internal/index
-              desc: this main runs internal/mcp and nothing else
             - pkg: github.com/impire-io/hits/internal/cli
               desc: this main runs internal/mcp and nothing else
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: this main runs internal/mcp and nothing else
-        cmd-hits-node-runs-its-service:
-          files: ["**/cmd/hits-node/*.go"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/index
-              desc: this main runs internal/node and nothing else
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: this main runs internal/node and nothing else
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: this main runs internal/node and nothing else
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: this main runs internal/node and nothing else
-        cmd-index-graph-runs-its-service:
-          files: ["**/cmd/hits-index-graph/*.go"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: this main runs internal/index/graph and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/search
-              desc: this main runs internal/index/graph and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/semantic
-              desc: this main runs internal/index/graph and nothing else
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: this main runs internal/index/graph and nothing else
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: this main runs internal/index/graph and nothing else
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: this main runs internal/index/graph and nothing else
-        cmd-index-search-runs-its-service:
-          files: ["**/cmd/hits-index-search/*.go"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: this main runs internal/index/search and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/graph
-              desc: this main runs internal/index/search and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/semantic
-              desc: this main runs internal/index/search and nothing else
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: this main runs internal/index/search and nothing else
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: this main runs internal/index/search and nothing else
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: this main runs internal/index/search and nothing else
-        cmd-index-semantic-runs-its-service:
-          files: ["**/cmd/hits-index-semantic/*.go"]
-          deny:
-            - pkg: github.com/impire-io/hits/internal/node
-              desc: this main runs internal/index/semantic and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/graph
-              desc: this main runs internal/index/semantic and nothing else
-            - pkg: github.com/impire-io/hits/internal/index/search
-              desc: this main runs internal/index/semantic and nothing else
-            - pkg: github.com/impire-io/hits/internal/cli
-              desc: this main runs internal/index/semantic and nothing else
-            - pkg: github.com/impire-io/hits/internal/mcp
-              desc: this main runs internal/index/semantic and nothing else
-            - pkg: github.com/impire-io/hits/internal/fleet
-              desc: this main runs internal/index/semantic and nothing else
     errcheck:
       # Writing to stdout/stderr and ignoring the (near-impossible) error is idiomatic.
       exclude-functions:

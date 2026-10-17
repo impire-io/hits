@@ -10,7 +10,7 @@ import (
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
-	"github.com/impire-io/hits/internal/connect"
+	"github.com/impire-io/hits/internal/config"
 )
 
 // multiFlag collects a repeatable string flag.
@@ -39,10 +39,6 @@ func runCreate(inv *invocation) error {
 		fs.Usage()
 		return errors.New("create: exactly one <report> argument")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 	init, err := initiativeOrErr(*initiative)
 	if err != nil {
 		return err
@@ -54,7 +50,6 @@ func runCreate(inv *invocation) error {
 	}
 	defer closeConn()
 	item, err := c.CreateItem(inv.ctx, client.CreateItemRequest{
-		Actor:           actor,
 		Type:            contract.Type(*typ),
 		Report:          fs.Arg(0),
 		Priority:        contract.Priority(*priority),
@@ -79,7 +74,7 @@ func initiativeOrErr(flagValue string) (string, error) {
 	if i := os.Getenv("HITS_INITIATIVE"); i != "" {
 		return i, nil
 	}
-	if i := connect.DefaultInitiative(); i != "" {
+	if i := config.DefaultInitiative(); i != "" {
 		return i, nil
 	}
 	return "", errors.New("no initiative: pass --initiative, set HITS_INITIATIVE, or run 'hits initiative select <slug>'")
@@ -129,12 +124,8 @@ func runEdit(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
-	req := client.EditItemRequest{Actor: actor, ID: id}
+	req := client.EditItemRequest{ID: id}
 	var parseErr error
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -252,10 +243,6 @@ func transitionCmd(inv *invocation, name, usage string, preset contract.Status) 
 		}
 		refs = append(refs, r)
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -263,7 +250,6 @@ func transitionCmd(inv *invocation, name, usage string, preset contract.Status) 
 	}
 	defer closeConn()
 	item, err := c.TransitionItem(inv.ctx, client.TransitionItemRequest{
-		Actor:         actor,
 		ID:            id,
 		To:            target,
 		LocatedIn:     projects,
@@ -289,17 +275,13 @@ func runClaim(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.ClaimItem(inv.ctx, client.ClaimItemRequest{Actor: actor, ID: id, Steal: *steal})
+	item, err := c.ClaimItem(inv.ctx, client.ClaimItemRequest{ID: id, Steal: *steal})
 	if err != nil {
 		return err
 	}
@@ -318,17 +300,13 @@ func runRelease(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.ReleaseItem(inv.ctx, client.ReleaseItemRequest{Actor: actor, ID: id})
+	item, err := c.ReleaseItem(inv.ctx, client.ReleaseItemRequest{ID: id})
 	if err != nil {
 		return err
 	}
@@ -348,17 +326,13 @@ func runBlock(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.BlockItem(inv.ctx, client.BlockItemRequest{Actor: actor, ID: id, BlockedBy: *by})
+	item, err := c.BlockItem(inv.ctx, client.BlockItemRequest{ID: id, BlockedBy: *by})
 	if err != nil {
 		return err
 	}
@@ -377,17 +351,13 @@ func runUnblock(inv *invocation) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.UnblockItem(inv.ctx, client.UnblockItemRequest{Actor: actor, ID: id})
+	item, err := c.UnblockItem(inv.ctx, client.UnblockItemRequest{ID: id})
 	if err != nil {
 		return err
 	}
@@ -416,17 +386,13 @@ func runLink(inv *invocation, retract bool) error {
 		fs.Usage()
 		return fmt.Errorf("%s: --type is required", name)
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	req := client.LinkItemRequest{Actor: actor, ID: id, Type: contract.LinkType(*typ), To: fs.Arg(0)}
+	req := client.LinkItemRequest{ID: id, Type: contract.LinkType(*typ), To: fs.Arg(0)}
 	var item contract.Item
 	if retract {
 		item, err = c.UnlinkItem(inv.ctx, req)
@@ -452,17 +418,13 @@ func runNote(inv *invocation) error {
 		fs.Usage()
 		return errors.New("note: exactly one <text> argument")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.NoteItem(inv.ctx, client.NoteItemRequest{Actor: actor, ID: id, Text: fs.Arg(0)})
+	item, err := c.NoteItem(inv.ctx, client.NoteItemRequest{ID: id, Text: fs.Arg(0)})
 	if err != nil {
 		return err
 	}
@@ -482,17 +444,13 @@ func runTombstone(inv *invocation) error {
 		fs.Usage()
 		return errors.New("tombstone: exactly one <reason> argument")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	item, err := c.TombstoneItem(inv.ctx, client.TombstoneItemRequest{Actor: actor, ID: id, Reason: fs.Arg(0)})
+	item, err := c.TombstoneItem(inv.ctx, client.TombstoneItemRequest{ID: id, Reason: fs.Arg(0)})
 	if err != nil {
 		return err
 	}

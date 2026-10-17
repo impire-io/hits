@@ -336,3 +336,43 @@ func TestProjectRetirement(t *testing.T) {
 		t.Fatal("apply retire without registration should error")
 	}
 }
+
+// TestItemOperationNames pins the store operation each legacy op becomes:
+// the initiative-only edit is the assign a closed item admits, a steal is
+// its own operation, and everything else keeps its name.
+func TestItemOperationNames(t *testing.T) {
+	initiative, priority := "hits", contract.Priority("high")
+	cases := []struct {
+		name string
+		op   contract.Op
+		want string
+	}{
+		{"assign", mustOp(t, contract.OpEdited, contract.EditedPayload{Initiative: &initiative}), "assign"},
+		{"edit with initiative", mustOp(t, contract.OpEdited, contract.EditedPayload{Initiative: &initiative, Priority: &priority}), "edit"},
+		{"edit", mustOp(t, contract.OpEdited, contract.EditedPayload{Priority: &priority}), "edit"},
+		{"claim", mustOp(t, contract.OpClaimed, contract.ClaimedPayload{}), "claim"},
+		{"steal", mustOp(t, contract.OpClaimed, contract.ClaimedPayload{Steal: true, StolenFrom: "member/daan"}), "steal"},
+		{"note", mustOp(t, contract.OpNoted, contract.NotedPayload{Text: "x"}), "note"},
+	}
+	for _, c := range cases {
+		got, err := contract.ItemOperation(c.op)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+	if _, err := contract.ItemOperation(contract.Op{Op: contract.OpRegistered}); err == nil {
+		t.Error("a vocabulary op is not an item op")
+	}
+}
+
+func mustOp(t *testing.T, kind contract.OpType, payload any) contract.Op {
+	t.Helper()
+	op, err := contract.NewOp(kind, "7", "member/calmera", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return op
+}

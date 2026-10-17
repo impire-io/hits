@@ -4,75 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"hash/fnv"
-	"math"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/nats-io/nats.go"
+
+	chron "github.com/impire-io/chronicle/client"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
-	"github.com/impire-io/hits/internal/index/graph"
-	"github.com/impire-io/hits/internal/index/search"
-	"github.com/impire-io/hits/internal/index/semantic"
+	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/mcp"
-	"github.com/impire-io/hits/internal/natstest"
-	"github.com/impire-io/hits/internal/node"
 )
 
-// harness is an embedded NATS server with the hits node on it; the index
-// services join per test. Tools run against the real wire, never a mock.
+// harness is chronicle's quick start with a HITS declared in it; tools
+// run against the real wire, never a mock.
 type harness struct {
-	url     string
-	svcConn *nats.Conn
+	cc *chron.Client
 }
 
 func startStore(t *testing.T) *harness {
 	t.Helper()
-	url := natstest.StartJetStream(t)
-
-	svcConn, err := nats.Connect(url)
-	if err != nil {
-		t.Fatalf("connect service side: %v", err)
-	}
-	t.Cleanup(svcConn.Close)
-
-	svc, err := node.Start(context.Background(), svcConn, node.Config{})
-	if err != nil {
-		t.Fatalf("start node: %v", err)
-	}
-	t.Cleanup(func() { _ = svc.Stop() })
-
-	// Every create needs a live initiative for its mint (decision 0016);
-	// the harness registers the one the sessions default to.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := client.New(svcConn).RegisterInitiative(ctx, client.RegisterInitiativeRequest{
-		Actor: "daan", Slug: "hits", Name: "The HITS platform",
-	}); err != nil {
-		t.Fatalf("register initiative hits: %v", err)
-	}
-
-	return &harness{url: url, svcConn: svcConn}
+	return &harness{cc: chronicletest.Start(t)}
 }
 
-// session connects an in-process MCP client to a server built on a real
-// connection to the harness — the same server production runs over stdio.
-func session(t *testing.T, h *harness, actor string) *sdk.ClientSession {
+// session connects an in-process MCP client to a server built on the
+// harness's client — the same server production runs over stdio.
+func session(t *testing.T, h *harness) *sdk.ClientSession {
 	t.Helper()
-	nc, err := nats.Connect(h.url)
-	if err != nil {
-		t.Fatalf("connect mcp side: %v", err)
-	}
-	t.Cleanup(nc.Close)
-
-	srv := mcp.NewServer(client.New(nc), actor, "hits")
+	srv := mcp.NewServer(client.New(h.cc, chronicletest.Store), "hits")
 	st, ct := sdk.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := srv.Connect(ctx, st, nil); err != nil {
@@ -140,9 +102,9 @@ func resultText(res *sdk.CallToolResult) string {
 // guardConnector fails the test the moment the server touches the wire —
 // for boots that must be rejected during validation.
 func guardConnector(t *testing.T) mcp.Connector {
-	return func(string) (*nats.Conn, error) {
-		t.Error("connector called: boot should fail before connecting")
-		return nil, errors.New("no connection in this test")
+	return func(string) (*client.Client, func(), error) {
+		t.Error("connector called: the server should fail before connecting")
+		return nil, nil, errors.New("no connection in this test")
 	}
 }
 
@@ -150,7 +112,7 @@ func guardConnector(t *testing.T) mcp.Connector {
 // client endpoint, the query and list tools read-only.
 func TestToolList(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res, err := cs.ListTools(testCtx(t), nil)
 	if err != nil {
@@ -191,7 +153,7 @@ func TestToolList(t *testing.T) {
 // by tool, decoding every reply into the contract snapshot.
 func TestItemLifecycleTools(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res := call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo", "initiative": "hits"})
 	if res.IsError {
@@ -208,7 +170,7 @@ func TestItemLifecycleTools(t *testing.T) {
 	})
 	id := item.ID
 	if item.Status != contract.Open || item.Priority != contract.High ||
-		item.Reporter != "daan" || item.DiscoveredWhile != "building hits-mcp" {
+		item.Reporter != "admin" || item.DiscoveredWhile != "building hits-mcp" {
 		t.Errorf("created item = %+v", item)
 	}
 
@@ -217,7 +179,7 @@ func TestItemLifecycleTools(t *testing.T) {
 	}
 
 	item = callItem(t, cs, "claim_item", map[string]any{"id": id})
-	if item.Claim == nil || item.Claim.By != "daan" {
+	if item.Claim == nil || item.Claim.By != "admin" {
 		t.Errorf("claimed item = %+v", item)
 	}
 
@@ -256,7 +218,7 @@ func TestItemLifecycleTools(t *testing.T) {
 
 func TestLinkEditTombstoneTools(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	a := callItem(t, cs, "create_item", map[string]any{"type": "bug", "report": "the parser crashes"}).ID
 	b := callItem(t, cs, "create_item", map[string]any{"type": "bug", "report": "parser crash on unicode"}).ID
@@ -291,7 +253,7 @@ func TestLinkEditTombstoneTools(t *testing.T) {
 // carries the retired snapshot and the listing no longer offers the slug.
 func TestRetireProjectTool(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res := call(t, cs, "register_project", map[string]any{"slug": "001-hits", "name": "HITS", "initiative": "hits"})
 	if res.IsError {
@@ -324,7 +286,7 @@ func TestRetireProjectTool(t *testing.T) {
 // results carrying the machine-legible code unchanged.
 func TestInvariantErrorVerbatim(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res := call(t, cs, "claim_item", map[string]any{"id": "no-such-item"})
 	if !res.IsError {
@@ -343,52 +305,11 @@ func TestInvariantErrorVerbatim(t *testing.T) {
 	}
 }
 
-// fakeProvider is an OpenAI-API-compatible embedding endpoint producing
-// deterministic bag-of-words vectors, as in the client package's tests.
-func fakeProvider(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Input string `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{"embedding": bagOfWords(req.Input)}},
-		})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func bagOfWords(text string) []float32 {
-	const dims = 64
-	vec := make([]float32, dims)
-	for _, word := range strings.Fields(strings.ToLower(text)) {
-		h := fnv.New32a()
-		_, _ = h.Write([]byte(word))
-		vec[h.Sum32()%dims]++
-	}
-	var norm float64
-	for _, v := range vec {
-		norm += float64(v) * float64(v)
-	}
-	if norm > 0 {
-		n := float32(math.Sqrt(norm))
-		for i := range vec {
-			vec[i] /= n
-		}
-	}
-	return vec
-}
-
 // TestQueryTools proves the four query tools find what the item tools
 // created, against the real index services.
 func TestQueryTools(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	call(t, cs, "register_project", map[string]any{"slug": "hits", "name": "HITS repo", "initiative": "hits"})
 	match := callItem(t, cs, "create_item", map[string]any{
@@ -399,49 +320,33 @@ func TestQueryTools(t *testing.T) {
 	})
 	callItem(t, cs, "claim_item", map[string]any{"id": match})
 
-	ctx := testCtx(t)
-	searchSvc, err := search.Start(ctx, h.svcConn)
-	if err != nil {
-		t.Fatalf("start search: %v", err)
-	}
-	t.Cleanup(searchSvc.Stop)
-	graphSvc, err := graph.Start(ctx, h.svcConn)
-	if err != nil {
-		t.Fatalf("start graph: %v", err)
-	}
-	t.Cleanup(graphSvc.Stop)
-	provider := fakeProvider(t)
-	semanticSvc, err := semantic.Start(ctx, h.svcConn, semantic.Config{
-		BaseURL: provider.URL, APIKey: "test-key", Model: "fake-model",
+	// The indexes trail the history: poll until they have caught up.
+	var searchReply client.SearchReply
+	untilOK(t, "search_items finds the item", func() bool {
+		res := call(t, cs, "search_items", map[string]any{"query": "login"})
+		if res.IsError {
+			return false
+		}
+		searchReply = decode[client.SearchReply](t, res)
+		return searchReply.Total == 1
 	})
-	if err != nil {
-		t.Fatalf("start semantic: %v", err)
-	}
-	t.Cleanup(semanticSvc.Stop)
-
-	res := call(t, cs, "search_items", map[string]any{"query": "login"})
-	if res.IsError {
-		t.Fatalf("search_items: %s", resultText(res))
-	}
-	searchReply := decode[client.SearchReply](t, res)
 	if searchReply.Total != 1 || len(searchReply.Hits) != 1 || searchReply.Hits[0].ID != match {
 		t.Errorf("search reply = %+v, want just %s", searchReply, match)
 	}
 
-	res = call(t, cs, "semantic_search", map[string]any{"text": "auth login loop", "limit": 1})
-	if res.IsError {
-		t.Fatalf("semantic_search: %s", resultText(res))
-	}
-	semReply := decode[client.SemanticReply](t, res)
-	if len(semReply.Hits) != 1 || semReply.Hits[0].ID != match {
-		t.Errorf("semantic reply = %+v, want %s first", semReply, match)
-	}
-
-	res = call(t, cs, "graph_neighbors", map[string]any{"kind": "item", "id": match})
+	var edges []client.GraphEdge
+	untilOK(t, "graph_neighbors sees the edges", func() bool {
+		res := call(t, cs, "graph_neighbors", map[string]any{"kind": "item", "id": match})
+		if res.IsError {
+			return false
+		}
+		edges = decode[client.NeighborsReply](t, res).Edges
+		return len(edges) >= 4
+	})
+	res := call(t, cs, "graph_neighbors", map[string]any{"kind": "item", "id": match})
 	if res.IsError {
 		t.Fatalf("graph_neighbors: %s", resultText(res))
 	}
-	edges := decode[client.NeighborsReply](t, res).Edges
 	var hasProject, hasClaim bool
 	for _, e := range edges {
 		hasProject = hasProject || (e.Type == client.EdgeLocatedIn && e.To.ID == "hits")
@@ -461,11 +366,11 @@ func TestQueryTools(t *testing.T) {
 	}
 	var hasActor, hasProjectNode bool
 	for _, n := range walk.Nodes {
-		hasActor = hasActor || (n.Kind == client.NodeActor && n.ID == "daan")
+		hasActor = hasActor || (n.Kind == client.NodeActor && n.ID == "admin")
 		hasProjectNode = hasProjectNode || (n.Kind == client.NodeProject && n.ID == "hits")
 	}
 	if !hasActor || !hasProjectNode {
-		t.Errorf("walk nodes = %+v, want actor daan and project hits reached", walk.Nodes)
+		t.Errorf("walk nodes = %+v, want actor admin and project hits reached", walk.Nodes)
 	}
 }
 
@@ -473,33 +378,16 @@ func TestQueryTools(t *testing.T) {
 func TestRunFailsFast(t *testing.T) {
 	var errOut strings.Builder
 
-	// An empty config home keeps the machine's real defaults.actor from
-	// satisfying the actor check.
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("HITS_ACTOR", "")
-	err := mcp.Run(testCtx(t), nil, &errOut, guardConnector(t))
-	if err == nil || !strings.Contains(err.Error(), "actor") {
-		t.Errorf("no actor: err = %v, want it named", err)
-	}
-
-	err = mcp.Run(testCtx(t), []string{"--actor", "Not Valid!"}, &errOut, guardConnector(t))
+	err := mcp.Run(testCtx(t), []string{"--initiative", "Not Valid!"}, &errOut, guardConnector(t))
 	if err == nil || !strings.Contains(err.Error(), "well-formed") {
-		t.Errorf("bad actor: err = %v, want a form error", err)
+		t.Errorf("bad initiative: err = %v, want a form error", err)
 	}
 
-	err = mcp.Run(testCtx(t), []string{"--actor", "daan"}, &errOut, func(string) (*nats.Conn, error) {
-		return nil, errors.New("nats context missing")
+	err = mcp.Run(testCtx(t), nil, &errOut, func(string) (*client.Client, func(), error) {
+		return nil, nil, errors.New("chronicle context missing")
 	})
-	if err == nil || !strings.Contains(err.Error(), "connect") {
-		t.Errorf("connect failure: err = %v, want connect named", err)
-	}
-
-	url := natstest.StartJetStream(t) // NATS up, but no hits service on it
-	err = mcp.Run(testCtx(t), []string{"--actor", "daan"}, &errOut, func(string) (*nats.Conn, error) {
-		return nats.Connect(url)
-	})
-	if err == nil || !strings.Contains(err.Error(), "ping") {
-		t.Errorf("no fleet: err = %v, want the failed ping named", err)
+	if err == nil || !strings.Contains(err.Error(), "context missing") {
+		t.Errorf("connect failure: err = %v, want the connector's error", err)
 	}
 }
 
@@ -508,7 +396,7 @@ func TestRunFailsFast(t *testing.T) {
 // honoring the server's startup default initiative.
 func TestInitiativeTools(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res := call(t, cs, "register_initiative", map[string]any{"slug": "pra", "name": "PRA"})
 	if res.IsError {
@@ -563,7 +451,7 @@ func TestInitiativeTools(t *testing.T) {
 // clear that lets it through, and the list carrying shipped history.
 func TestReleaseTools(t *testing.T) {
 	h := startStore(t)
-	cs := session(t, h, "daan")
+	cs := session(t, h)
 
 	res := call(t, cs, "register_release", map[string]any{"initiative": "hits", "slug": "0.5", "name": "The 0.5 release"})
 	if res.IsError {
@@ -614,5 +502,18 @@ func TestReleaseTools(t *testing.T) {
 	res = call(t, cs, "retire_release", map[string]any{"initiative": "hits", "slug": "0.5", "reason": "no"})
 	if !res.IsError || !strings.Contains(resultText(res), "release-shipped") {
 		t.Errorf("retire shipped = %v (%s), want release-shipped", res.IsError, resultText(res))
+	}
+}
+
+// untilOK polls a derived read — the indexes trail the history — until it
+// holds or the deadline passes.
+func untilOK(t *testing.T, what string, check func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for !check() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: never held", what)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }

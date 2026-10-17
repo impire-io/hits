@@ -2,6 +2,13 @@ version: 2
 
 project_name: hits
 
+# The install manifest is generated from the declaration the binary
+# applies, at the release's own version, so the two cannot drift
+# (hits-hq 02-DESIGN/the-cutover.md § hits store init).
+before:
+  hooks:
+    - sh -c "go run ./cmd/hits store manifest --version {{ .Version }} > install.json"
+
 builds:
   - id: hits
     main: ./cmd/hits
@@ -25,10 +32,10 @@ builds:
       - -s -w -X github.com/impire-io/hits/internal/version.Version={{.Version}}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
-# One archive per platform: hits (client + up, the whole fleet in one
-# process) and hits-mcp (the agent action surface) cover every way of using
-# HITS. The standalone fleet binaries stay buildable and return to the
-# archive when a production consumer asks (hits-hq decision 0004).
+# One archive per platform: hits (the client, with store init) and hits-mcp
+# (the agent action surface) cover every way of using HITS; install.json is
+# the install manifest chronicle's console enables a HITS from (hits-hq
+# decision 0022). Nothing of HITS runs as a service.
 archives:
   - id: hits
     ids: [hits, hits-mcp]
@@ -40,6 +47,7 @@ archives:
     files:
       - README.md
       - LICENSE
+      - install.json
 
 # One formula installing both binaries from the platform archive. It is
 # pushed to impire-io/homebrew-tap on every release — RCs included,

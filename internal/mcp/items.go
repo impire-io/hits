@@ -10,7 +10,7 @@ import (
 )
 
 // The input types restate the client request types field for field, wire
-// names included, minus actor — the server supplies it. Schemas stay loose
+// names included, minus any actor — the author is the context's principal (hits-hq decision 0021). Schemas stay loose
 // (no enums): the service's invariants are the validator, so rejections
 // keep their machine-legible names.
 
@@ -126,15 +126,15 @@ type listReleasesIn struct {
 
 type emptyIn struct{}
 
-func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
-	sdk.AddTool(s, &sdk.Tool{Name: "create_item", Description: "Open an item; the actor becomes the reporter. A task must name located-in; the initiative names the ID's mint."},
+func addItemTools(s *sdk.Server, c *client.Client, initiative string) {
+	sdk.AddTool(s, &sdk.Tool{Name: "create_item", Description: "Open an item; the context's principal becomes the reporter. A task must name located-in; the initiative names the ID's mint."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in createItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			init := in.Initiative
 			if init == "" {
 				init = initiative
 			}
 			item, err := c.CreateItem(ctx, client.CreateItemRequest{
-				Actor: actor, Type: in.Type, Report: in.Report, Priority: in.Priority,
+				Type: in.Type, Report: in.Report, Priority: in.Priority,
 				Initiative: init, Target: in.Target, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile,
 			})
 			return nil, item, err
@@ -149,7 +149,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "edit_item", Description: "Change non-lifecycle properties; absent fields stay untouched."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in editItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			item, err := c.EditItem(ctx, client.EditItemRequest{
-				Actor: actor, ID: in.ID, Priority: in.Priority, Initiative: in.Initiative,
+				ID: in.ID, Priority: in.Priority, Initiative: in.Initiative,
 				Target: in.Target, LocatedIn: in.LocatedIn, DiscoveredWhile: in.DiscoveredWhile, Lands: in.Lands,
 			})
 			return nil, item, err
@@ -158,7 +158,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "transition_item", Description: "Move an item's status; closing transitions carry fixed-by and amended-design, and the service stamps the close date."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in transitionItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			item, err := c.TransitionItem(ctx, client.TransitionItemRequest{
-				Actor: actor, ID: in.ID, To: in.To,
+				ID: in.ID, To: in.To,
 				LocatedIn: in.LocatedIn, FixedBy: in.FixedBy, AmendedDesign: in.AmendedDesign,
 			})
 			return nil, item, err
@@ -166,56 +166,56 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 
 	sdk.AddTool(s, &sdk.Tool{Name: "claim_item", Description: "Record intent to work an item — not started work."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in claimItemIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.ClaimItem(ctx, client.ClaimItemRequest{Actor: actor, ID: in.ID, Steal: in.Steal})
+			item, err := c.ClaimItem(ctx, client.ClaimItemRequest{ID: in.ID, Steal: in.Steal})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "release_item", Description: "Hand a claim back."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in itemRefIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.ReleaseItem(ctx, client.ReleaseItemRequest{Actor: actor, ID: in.ID})
+			item, err := c.ReleaseItem(ctx, client.ReleaseItemRequest{ID: in.ID})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "block_item", Description: "Block an item on the named thing; the interrupted status is remembered."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in blockItemIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.BlockItem(ctx, client.BlockItemRequest{Actor: actor, ID: in.ID, BlockedBy: in.BlockedBy})
+			item, err := c.BlockItem(ctx, client.BlockItemRequest{ID: in.ID, BlockedBy: in.BlockedBy})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "unblock_item", Description: "Lift a block, restoring the interrupted status."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in itemRefIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.UnblockItem(ctx, client.UnblockItemRequest{Actor: actor, ID: in.ID})
+			item, err := c.UnblockItem(ctx, client.UnblockItemRequest{ID: in.ID})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "link_items", Description: "Assert a typed edge between two items."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in linkItemsIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.LinkItem(ctx, client.LinkItemRequest{Actor: actor, ID: in.ID, Type: in.Type, To: in.To})
+			item, err := c.LinkItem(ctx, client.LinkItemRequest{ID: in.ID, Type: in.Type, To: in.To})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "unlink_items", Description: "Retract a previously asserted edge."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in linkItemsIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.UnlinkItem(ctx, client.LinkItemRequest{Actor: actor, ID: in.ID, Type: in.Type, To: in.To})
+			item, err := c.UnlinkItem(ctx, client.LinkItemRequest{ID: in.ID, Type: in.Type, To: in.To})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "note_item", Description: "Append a trail entry: follow-ups, diagnosis, closing reasoning."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in noteItemIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.NoteItem(ctx, client.NoteItemRequest{Actor: actor, ID: in.ID, Text: in.Text})
+			item, err := c.NoteItem(ctx, client.NoteItemRequest{ID: in.ID, Text: in.Text})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "tombstone_item", Description: "Void a filing mistake; the item accepts no further ops."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in tombstoneItemIn) (*sdk.CallToolResult, contract.Item, error) {
-			item, err := c.TombstoneItem(ctx, client.TombstoneItemRequest{Actor: actor, ID: in.ID, Reason: in.Reason})
+			item, err := c.TombstoneItem(ctx, client.TombstoneItemRequest{ID: in.ID, Reason: in.Reason})
 			return nil, item, err
 		})
 
 	sdk.AddTool(s, &sdk.Tool{Name: "register_project", Description: "Add a project to the located-in vocabulary, into an initiative."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in registerProjectIn) (*sdk.CallToolResult, contract.Project, error) {
 			p, err := c.RegisterProject(ctx, client.RegisterProjectRequest{
-				Actor: actor, Slug: in.Slug, Name: in.Name, Description: in.Description,
+				Slug: in.Slug, Name: in.Name, Description: in.Description,
 				Initiative: in.Initiative,
 			})
 			return nil, p, err
@@ -224,7 +224,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "assign_project", Description: "Move a project to an initiative — or backfill a pre-initiative registration."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in assignProjectIn) (*sdk.CallToolResult, contract.Project, error) {
 			p, err := c.AssignProject(ctx, client.AssignProjectRequest{
-				Actor: actor, Slug: in.Slug, Initiative: in.Initiative,
+				Slug: in.Slug, Initiative: in.Initiative,
 			})
 			return nil, p, err
 		})
@@ -232,7 +232,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "retire_project", Description: "Retire a project: the slug leaves the located-in vocabulary and is never reused; history stands."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in retireProjectIn) (*sdk.CallToolResult, contract.Project, error) {
 			p, err := c.RetireProject(ctx, client.RetireProjectRequest{
-				Actor: actor, Slug: in.Slug, Reason: in.Reason,
+				Slug: in.Slug, Reason: in.Reason,
 			})
 			return nil, p, err
 		})
@@ -246,7 +246,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "register_initiative", Description: "Add an initiative — a named group of projects — to the vocabulary."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in registerInitiativeIn) (*sdk.CallToolResult, contract.Initiative, error) {
 			i, err := c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{
-				Actor: actor, Slug: in.Slug, Name: in.Name, Description: in.Description,
+				Slug: in.Slug, Name: in.Name, Description: in.Description,
 			})
 			return nil, i, err
 		})
@@ -254,7 +254,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "retire_initiative", Description: "Retire an initiative: the slug leaves the vocabulary and is never reused; history stands."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in retireInitiativeIn) (*sdk.CallToolResult, contract.Initiative, error) {
 			i, err := c.RetireInitiative(ctx, client.RetireInitiativeRequest{
-				Actor: actor, Slug: in.Slug, Reason: in.Reason,
+				Slug: in.Slug, Reason: in.Reason,
 			})
 			return nil, i, err
 		})
@@ -268,7 +268,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "register_release", Description: "Add a release — a named ship point items target — to an initiative's vocabulary."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in registerReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
 			r, err := c.RegisterRelease(ctx, client.RegisterReleaseRequest{
-				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Name: in.Name, Description: in.Description,
+				Initiative: in.Initiative, Slug: in.Slug, Name: in.Name, Description: in.Description,
 			})
 			return nil, r, err
 		})
@@ -276,7 +276,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "ship_release", Description: "Complete a release with its evidence. Refused (open-targets) while any non-terminal item targets it — re-target or clear the stragglers first; the cut is the triage pass."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in shipReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
 			r, err := c.ShipRelease(ctx, client.ShipReleaseRequest{
-				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Refs: in.Refs, Note: in.Note,
+				Initiative: in.Initiative, Slug: in.Slug, Refs: in.Refs, Note: in.Note,
 			})
 			return nil, r, err
 		})
@@ -284,7 +284,7 @@ func addItemTools(s *sdk.Server, c *client.Client, actor, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "retire_release", Description: "Retire a release: the slug leaves the vocabulary and is never reused; history stands."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in retireReleaseIn) (*sdk.CallToolResult, contract.Release, error) {
 			r, err := c.RetireRelease(ctx, client.RetireReleaseRequest{
-				Actor: actor, Initiative: in.Initiative, Slug: in.Slug, Reason: in.Reason,
+				Initiative: in.Initiative, Slug: in.Slug, Reason: in.Reason,
 			})
 			return nil, r, err
 		})

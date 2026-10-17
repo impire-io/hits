@@ -1,7 +1,7 @@
 // Package cli implements the hits terminal client. The logic lives here (not
 // in cmd/) so it is testable: Run takes an explicit context, output writers,
 // and an injectable Connector, letting tests drive every command against an
-// in-process server.
+// in-process chronicle.
 package cli
 
 import (
@@ -10,22 +10,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
-	"github.com/nats-io/nats.go"
-
 	"github.com/impire-io/hits/client"
-	"github.com/impire-io/hits/internal/connect"
+	"github.com/impire-io/hits/internal/dial"
 	"github.com/impire-io/hits/internal/version"
 )
 
-const usageText = `hits — a HITS client
+const usageText = `hits — a HITS client, on chronicle
 
 Usage:
-  hits [--context <name>] [--actor <handle>] [--json] <command> [flags] [args]
+  hits [--context <chronicle context>] [--json] <command> [flags] [args]
 
-Item commands (the actor comes from --actor or $HITS_ACTOR):
+Item commands (the author of every write is the context's principal):
   create      open an item:           create --type <t> [flags] <report>
   get         one item's snapshot:    get <id>
   edit        non-lifecycle changes:  edit <id> [flags]
@@ -55,39 +52,38 @@ Vocabulary and queries:
 
 Audit (git as evidence, the tracker as the record):
   audit       hold fixed-by refs and merged work against local clones'
-              main: audit --repo <slug>=<path> [--repo ...]
+              main, and the writes since the cutover against chronicle's
+              word: audit [--repo <slug>=<path> ...] [--since-seq <n>]
 
-Run the platform:
-  up          run the service fleet in this process (flags follow the
-              subcommand — see 'hits up -h')
-
-Contexts (connection configuration, $XDG_CONFIG_HOME/hits/context):
-  context     manage hits contexts: ls | add | import | edit | rm | select
-
-Authentication (hits contexts with an oauth block):
-  auth        IDP device-flow login: login | status | logout  [--context <name>]
+The store (a HITS is one store in a chronicle account):
+  store       declare a HITS in the context's account: store init [--version <v>] |
+              print the install manifest: store manifest
+  migrate     move a running install's hits-ops stream into the store:
+              migrate --from <hits context>  (one release's verb)
 
 Service:
-  ping        ask the running service to identify itself
   version     print the client version
 
-Global flags go before the command, command flags after the leading <id>.
+The connection is a chronicle context: 'chronicle login' for the hosted
+account, 'chronicle context add' for a credential on your own NATS;
+--context names one, else the selection (CHRONICLE_CONTEXT). Global flags
+go before the command, command flags after the leading <id>.
 Run 'hits <command> -h' for a command's flags.
 `
 
 // defaultFan is the default --fan wherever a command keeps a window of
-// concurrent gets in flight — the search table's snapshot resolver and
-// the audit's corpus walk share the one bound.
+// concurrent gets in flight.
 const defaultFan = 8
 
-// Connector opens the NATS connection a command talks through. Production use
-// resolves a NATS context; tests inject a connection to an embedded server.
-type Connector func(contextName string) (*nats.Conn, error)
+// Connector opens the client a command talks through, with the function
+// that closes its connection. Production use dials a chronicle context;
+// tests inject a client on an in-process chronicle.
+type Connector func(contextName string) (*client.Client, func(), error)
 
-// ContextConnector resolves the named context — hits' own or the nats
-// CLI's ("" means the configured default, else the selected one).
-func ContextConnector(contextName string) (*nats.Conn, error) {
-	return connect.Connect(contextName, "hits")
+// ContextConnector dials the named chronicle context ("" means the
+// selected one).
+func ContextConnector(contextName string) (*client.Client, func(), error) {
+	return dial.Context(contextName)
 }
 
 // invocation carries one parsed CLI call: the global flags, the arguments
@@ -98,7 +94,6 @@ type invocation struct {
 	errOut      io.Writer
 	connect     Connector
 	contextName string
-	actor       string
 	json        bool
 	args        []string
 }
@@ -108,8 +103,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 	fs := flag.NewFlagSet("hits", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() { fmt.Fprint(errOut, usageText) }
-	ctxName := fs.String("context", "", "hits context to connect with (default: the config's default context)")
-	actor := fs.String("actor", "", "acting handle for write commands (default: $HITS_ACTOR)")
+	ctxName := fs.String("context", "", "chronicle context to connect with (default: the selected one)")
 	jsonOut := fs.Bool("json", false, "print replies as indented JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -117,7 +111,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 
 	inv := &invocation{
 		ctx: ctx, out: out, errOut: errOut, connect: connect,
-		contextName: *ctxName, actor: *actor, json: *jsonOut,
+		contextName: *ctxName, json: *jsonOut,
 	}
 	if fs.NArg() > 0 {
 		inv.args = fs.Args()[1:]
@@ -164,12 +158,10 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runGraph(inv)
 	case "audit":
 		return runAudit(inv)
-	case "context":
-		return runContext(inv)
-	case "auth":
-		return runAuth(inv)
-	case "ping":
-		return runPing(inv)
+	case "store":
+		return runStore(inv)
+	case "migrate":
+		return runMigrate(inv)
 	case "version":
 		fmt.Fprintln(out, version.Version)
 		return nil
@@ -193,29 +185,14 @@ func (inv *invocation) flagSet(name, usage string) *flag.FlagSet {
 	return fs
 }
 
-// actorOrErr resolves the acting handle a write command signs with. It fails
-// before anything touches the wire.
-func (inv *invocation) actorOrErr() (string, error) {
-	if inv.actor != "" {
-		return inv.actor, nil
-	}
-	if a := os.Getenv("HITS_ACTOR"); a != "" {
-		return a, nil
-	}
-	if a := connect.DefaultActor(); a != "" {
-		return a, nil
-	}
-	return "", errors.New("no actor: pass --actor, set HITS_ACTOR, or set a default in the client config")
-}
-
-// dial connects and wraps the connection in the client; the returned func
-// closes it.
+// dial connects through the chronicle context; the returned func closes
+// the connection.
 func (inv *invocation) dial() (*client.Client, func(), error) {
-	nc, err := inv.connect(inv.contextName)
+	c, closeConn, err := inv.connect(inv.contextName)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect: %w", err)
+		return nil, nil, err
 	}
-	return client.New(nc), nc.Close, nil
+	return c, closeConn, nil
 }
 
 // errFlagsFirst signals that the first argument is a flag where a positional
@@ -260,23 +237,5 @@ func noTrailing(fs *flag.FlagSet) error {
 		fs.Usage()
 		return fmt.Errorf("%s: unexpected argument %q", fs.Name(), fs.Arg(0))
 	}
-	return nil
-}
-
-func runPing(inv *invocation) error {
-	c, closeConn, err := inv.dial()
-	if err != nil {
-		return err
-	}
-	defer closeConn()
-
-	about, err := c.Ping(inv.ctx)
-	if err != nil {
-		return err
-	}
-	if inv.json {
-		return emit(inv.out, about)
-	}
-	fmt.Fprintf(inv.out, "%s %s\n", about.Name, about.Version)
 	return nil
 }

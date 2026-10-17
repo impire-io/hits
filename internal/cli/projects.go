@@ -51,10 +51,6 @@ func runProjectRegister(inv *invocation, args []string) error {
 		fs.Usage()
 		return errors.New("project register: --initiative is required")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -62,7 +58,7 @@ func runProjectRegister(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	p, err := c.RegisterProject(inv.ctx, client.RegisterProjectRequest{
-		Actor: actor, Slug: lead[0], Name: lead[1], Description: *description, Initiative: *initiative,
+		Slug: lead[0], Name: lead[1], Description: *description, Initiative: *initiative,
 	})
 	if err != nil {
 		return err
@@ -94,10 +90,6 @@ func runProjectAssign(inv *invocation, args []string) error {
 		fs.Usage()
 		return errors.New("project assign: --initiative is required")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -105,7 +97,7 @@ func runProjectAssign(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	p, err := c.AssignProject(inv.ctx, client.AssignProjectRequest{
-		Actor: actor, Slug: lead[0], Initiative: *initiative,
+		Slug: lead[0], Initiative: *initiative,
 	})
 	if err != nil {
 		return err
@@ -137,10 +129,6 @@ func runProjectRetire(inv *invocation, args []string) error {
 		fs.Usage()
 		return errors.New("project retire: --reason is required")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -148,7 +136,7 @@ func runProjectRetire(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	p, err := c.RetireProject(inv.ctx, client.RetireProjectRequest{
-		Actor: actor, Slug: lead[0], Reason: *reason,
+		Slug: lead[0], Reason: *reason,
 	})
 	if err != nil {
 		return err

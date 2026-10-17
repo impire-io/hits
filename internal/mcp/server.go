@@ -1,55 +1,50 @@
 // Package mcp implements hits-mcp, the agent action surface: an MCP stdio
-// server exposing the client API to agents as tools, one tool per endpoint
-// (hits-hq 02-DESIGN/mcp-server.md, decision 0003). It is a client of the
-// fleet, never a peer — stateless, no NATS endpoints, no projections. The
-// logic lives here (not in cmd/) so it is testable: Run takes an injectable
-// Connector, and NewServer is transport-free so tests drive the same server
-// over an in-memory session.
+// server exposing the client API to agents as tools, one tool per client
+// method (hits-hq 02-DESIGN/mcp-server.md, decision 0003, amended by
+// 0021). It is a client of the store, never a service — stateless, no NATS
+// endpoints, no projections. The logic lives here (not in cmd/) so it is
+// testable: Run takes an injectable Connector.
 package mcp
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/nats-io/nats.go"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
-	"github.com/impire-io/hits/internal/connect"
+	"github.com/impire-io/hits/internal/config"
+	"github.com/impire-io/hits/internal/dial"
 	"github.com/impire-io/hits/internal/version"
 )
 
-// Connector opens the NATS connection the server talks through. Production
-// use resolves a NATS context; tests inject a connection to an embedded
-// server.
-type Connector func(contextName string) (*nats.Conn, error)
+// Connector opens the client the server talks through, with the function
+// that closes its connection. Production use dials a chronicle context;
+// tests inject a client on an in-process chronicle.
+type Connector func(contextName string) (*client.Client, func(), error)
 
-// ContextConnector resolves the named context — hits' own or the nats
-// CLI's ("" means the configured default, else the selected one).
-func ContextConnector(contextName string) (*nats.Conn, error) {
-	return connect.Connect(contextName, "hits-mcp")
+// ContextConnector dials the named chronicle context ("" means the
+// selected one).
+func ContextConnector(contextName string) (*client.Client, func(), error) {
+	return dial.Context(contextName)
 }
 
-// defaultActor and defaultInitiative are indirected so Run's connect
-// parameter keeps its name.
-var (
-	defaultActor      = connect.DefaultActor
-	defaultInitiative = connect.DefaultInitiative
-)
+// defaultInitiative is indirected so Run's connect parameter keeps its
+// name.
+var defaultInitiative = config.DefaultInitiative
 
-// Run executes the server: parse flags, resolve and validate the actor,
-// connect and ping the fleet — all fail-fast — then serve MCP over stdio
-// until ctx ends. args excludes the program name.
+// Run executes the server: parse flags, connect — fail-fast — then serve
+// MCP over stdio until ctx ends. args excludes the program name. The actor
+// is the context's principal: one process is one context, and the
+// context is somebody (hits-hq decision 0021).
 func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector) error {
 	fs := flag.NewFlagSet("hits-mcp", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	ctxName := fs.String("context", "", "NATS context to connect with (default: the selected context)")
-	actorFlag := fs.String("actor", "", "acting handle stamped on every write (default: $HITS_ACTOR)")
+	ctxName := fs.String("context", "", "chronicle context to connect with (default: the selected one)")
 	initiativeFlag := fs.String("initiative", "", "filing default for create_item when the call names none (default: $HITS_INITIATIVE, else the selected initiative)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -57,21 +52,6 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 	if fs.NArg() != 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-
-	actor := *actorFlag
-	if actor == "" {
-		actor = os.Getenv("HITS_ACTOR")
-	}
-	if actor == "" {
-		actor = defaultActor()
-	}
-	if actor == "" {
-		return errors.New("no actor: pass --actor, set HITS_ACTOR, or set a default in the client config")
-	}
-	if !contract.ValidActor(actor) {
-		return fmt.Errorf("actor %q is not a well-formed handle", actor)
-	}
-
 	// The default initiative is optional — a create_item naming its own
 	// initiative never needs it — but a given one must be well-formed. It
 	// is a filing default only, never a read scope (decision 0016).
@@ -85,18 +65,12 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 	if initiative != "" && !contract.ValidInitiativeSlug(initiative) {
 		return fmt.Errorf("initiative %q is not a well-formed initiative slug", initiative)
 	}
-
-	nc, err := connect(*ctxName)
+	c, closeConn, err := connect(*ctxName)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		return err
 	}
-	defer nc.Close()
-	c := client.New(nc)
-	if _, err := c.Ping(ctx); err != nil {
-		return fmt.Errorf("ping hits service: %w", err)
-	}
-
-	return NewServer(c, actor, initiative).Run(ctx, &sdk.StdioTransport{})
+	defer closeConn()
+	return NewServer(c, initiative).Run(ctx, &sdk.StdioTransport{})
 }
 
 // NewServer builds the MCP server on an established client: the tools of
@@ -104,9 +78,9 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 // means adding its tool here in the same change. initiative is the filing
 // default create_item falls back to; "" means every create must name its
 // own.
-func NewServer(c *client.Client, actor, initiative string) *sdk.Server {
+func NewServer(c *client.Client, initiative string) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: "hits", Version: version.Version}, nil)
-	addItemTools(s, c, actor, initiative)
+	addItemTools(s, c, initiative)
 	addQueryTools(s, c)
 	return s
 }

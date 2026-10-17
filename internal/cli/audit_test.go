@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/cli"
 )
 
@@ -78,7 +80,6 @@ func auditOut(t *testing.T, connect cli.Connector, args ...string) (string, erro
 func TestAuditClean(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	repo.mergeWork(9, "hits-1")
 	sha := repo.commit("a direct fix on main")
@@ -99,7 +100,6 @@ func TestAuditClean(t *testing.T) {
 func TestAuditSquashMergeVerifiesPR(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	repo.commit("polish the table (#12)")
 
@@ -116,7 +116,6 @@ func TestAuditSquashMergeVerifiesPR(t *testing.T) {
 func TestAuditPrUnmerged(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "the CLI panics"))
@@ -132,7 +131,6 @@ func TestAuditPrUnmerged(t *testing.T) {
 func TestAuditCommitUnmerged(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	repo.git("checkout", "-b", "stray")
 	sha := repo.commit("never merged")
@@ -152,7 +150,6 @@ func TestAuditCommitUnmerged(t *testing.T) {
 func TestAuditQualifiedCommitRef(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	merged := repo.commit("landed on main")
 	repo.git("checkout", "-b", "stray")
@@ -179,7 +176,6 @@ func TestAuditQualifiedCommitRef(t *testing.T) {
 func TestAuditMergedOpenAndUntracked(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	repo.mergeWork(5, "hits-1")
 	repo.mergeWork(6, "hits-42")
@@ -201,7 +197,6 @@ func TestAuditMergedOpenAndUntracked(t *testing.T) {
 func TestAuditTombstonedSkippedButNotLive(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	repo.mergeWork(7, "hits-1")
 
@@ -219,7 +214,6 @@ func TestAuditTombstonedSkippedButNotLive(t *testing.T) {
 func TestAuditUnverifiableWarnsOnly(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 	sha := repo.commit("somewhere")
 
@@ -245,7 +239,6 @@ func TestAuditUnverifiableWarnsOnly(t *testing.T) {
 func TestAuditActionRefsProduceNothing(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 
 	id := itemID(t, run(t, connect, "create", "--type", "improvement", "cut the release"))
@@ -261,7 +254,6 @@ func TestAuditActionRefsProduceNothing(t *testing.T) {
 func TestAuditJSON(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "the CLI panics"))
@@ -311,7 +303,6 @@ func TestAuditRejectsBeforeDialing(t *testing.T) {
 func TestAuditFanIsConfigurable(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 
 	run(t, connect, "create", "--type", "bug", "one symptom")
@@ -330,7 +321,6 @@ func TestAuditFanIsConfigurable(t *testing.T) {
 func TestAuditTargetNet(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	repo := newGitRepo(t, "impire-io/hits")
 
 	run(t, connect, "release", "register", "0.5", "The 0.5 release")
@@ -355,4 +345,32 @@ func TestAuditTargetNet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit after the clear failed: %v\n%s", err, out)
 	}
+}
+
+// TestAuditSinceSeqAlone: the cutover's read needs no clone — every write
+// after the cutover's sequence that chronicle did not vouch for fails the
+// audit, and the client's own writes, all vouched for, pass it.
+func TestAuditSinceSeqAlone(t *testing.T) {
+	h := startStore(t)
+	connect := h.connector()
+	run(t, connect, "create", "--type", "bug", "one symptom")
+	run(t, connect, "create", "--type", "bug", "another symptom")
+
+	out, err := auditOut(t, connect, "audit", "--since-seq", "1")
+	if err != nil {
+		t.Fatalf("since-seq alone: %v\n%s", err, out)
+	}
+	wantContains(t, out, "audited 2 items")
+
+	// A direct publish nobody vouched for — the shape of an import — lands
+	// after the cutover's sequence and is reported.
+	data, _ := json.Marshal(map[string]any{"text": "nobody vouched"})
+	if _, err := h.cc.Apply(testCtx(t), chronicletest.Store, contract.ItemPath("hits-1"), "note", data); err != nil {
+		t.Fatal(err)
+	}
+	out, err = auditOut(t, connect, "audit", "--since-seq", "1")
+	if err == nil {
+		t.Fatalf("an unvouched write must fail the audit\n%s", out)
+	}
+	wantContains(t, out, "unverified-write")
 }

@@ -5,74 +5,42 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"hash/fnv"
-	"math"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	chron "github.com/impire-io/chronicle/client"
 
 	"github.com/impire-io/hits/client"
 	"github.com/impire-io/hits/contract"
+	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/cli"
-	"github.com/impire-io/hits/internal/index/graph"
-	"github.com/impire-io/hits/internal/index/search"
-	"github.com/impire-io/hits/internal/index/semantic"
-	"github.com/impire-io/hits/internal/natstest"
-	"github.com/impire-io/hits/internal/node"
 	"github.com/impire-io/hits/internal/version"
 )
 
-// harness is an embedded NATS server with the hits node on it; the index
-// services join per test. Commands run against the real wire, never a mock.
+// harness is chronicle's quick start with a HITS declared in it; commands
+// run against the real wire, never a mock.
 type harness struct {
-	url     string
-	svcConn *nats.Conn
+	cc *chron.Client
 }
 
 func startStore(t *testing.T) *harness {
 	t.Helper()
-	url := natstest.StartJetStream(t)
-
-	svcConn, err := nats.Connect(url)
-	if err != nil {
-		t.Fatalf("connect service side: %v", err)
-	}
-	t.Cleanup(svcConn.Close)
-
-	svc, err := node.Start(context.Background(), svcConn, node.Config{})
-	if err != nil {
-		t.Fatalf("start node: %v", err)
-	}
-	t.Cleanup(func() { _ = svc.Stop() })
-
-	// Every create needs a live initiative for its mint (decision 0016):
-	// the harness registers the shared one and exports the filing default.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if _, err := client.New(svcConn).RegisterInitiative(ctx, client.RegisterInitiativeRequest{
-		Actor: "daan", Slug: "hits", Name: "The HITS platform",
-	}); err != nil {
-		t.Fatalf("register initiative hits: %v", err)
-	}
-	t.Setenv("HITS_INITIATIVE", "hits")
-
-	return &harness{url: url, svcConn: svcConn}
+	return &harness{cc: chronicletest.Start(t)}
 }
 
 func (h *harness) connector() cli.Connector {
-	return func(string) (*nats.Conn, error) { return nats.Connect(h.url) }
+	return func(string) (*client.Client, func(), error) {
+		return client.New(h.cc, chronicletest.Store), func() {}, nil
+	}
 }
 
 // guardConnector fails the test the moment a command touches the wire — for
 // invocations that must be rejected during argument validation.
 func guardConnector(t *testing.T) cli.Connector {
-	return func(string) (*nats.Conn, error) {
+	return func(string) (*client.Client, func(), error) {
 		t.Error("connector called: command should fail before connecting")
-		return nil, errors.New("no connection in this test")
+		return nil, nil, errors.New("no connection in this test")
 	}
 }
 
@@ -123,15 +91,6 @@ func wantContains(t *testing.T, out string, wants ...string) {
 	}
 }
 
-func TestPingCommand(t *testing.T) {
-	h := startStore(t)
-
-	out := run(t, h.connector(), "ping")
-	if want := "hits " + version.Version + "\n"; out != want {
-		t.Errorf("ping output = %q, want %q", out, want)
-	}
-}
-
 func TestVersionCommand(t *testing.T) {
 	out := run(t, nil, "version")
 	if want := version.Version + "\n"; out != want {
@@ -155,7 +114,6 @@ func TestUnknownCommand(t *testing.T) {
 func TestItemLifecycle(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	out := run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	wantContains(t, out, "hits", "HITS repo")
@@ -166,7 +124,7 @@ func TestItemLifecycle(t *testing.T) {
 		"the CLI panics on empty input")
 	wantContains(t, out, "bug", "open", "high",
 		"report: the CLI panics on empty input",
-		"reporter: daan",
+		"reporter: admin",
 		"located-in: hits",
 		"discovered-while: building the CLI")
 	id := itemID(t, out)
@@ -175,7 +133,7 @@ func TestItemLifecycle(t *testing.T) {
 	wantContains(t, out, id, "the CLI panics on empty input")
 
 	out = run(t, connect, "claim", id)
-	wantContains(t, out, "claimed-by: daan")
+	wantContains(t, out, "claimed-by: admin")
 
 	out = run(t, connect, "release", id)
 	if strings.Contains(out, "claimed-by") {
@@ -217,7 +175,6 @@ func TestItemLifecycle(t *testing.T) {
 func TestProjectRetire(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	run(t, connect, "project", "register", "001-hits", "HITS", "--initiative", "hits")
 	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
@@ -257,7 +214,6 @@ func TestProjectRetire(t *testing.T) {
 func TestWontfixCommand(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "cosmetic misalignment"))
 	out := run(t, connect, "wontfix", id)
@@ -267,7 +223,6 @@ func TestWontfixCommand(t *testing.T) {
 func TestLinkEditTombstone(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	a := itemID(t, run(t, connect, "create", "--type", "bug", "the parser crashes"))
 	b := itemID(t, run(t, connect, "create", "--type", "bug", "parser crash on unicode"))
@@ -287,28 +242,8 @@ func TestLinkEditTombstone(t *testing.T) {
 	wantContains(t, out, "tombstoned: filed twice")
 }
 
-func TestWriteNeedsActor(t *testing.T) {
-	// An empty config home keeps the machine's real defaults.actor from
-	// satisfying the actor check.
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	t.Setenv("HITS_ACTOR", "")
-	err := runErr(t, guardConnector(t), "create", "--type", "bug", "some report")
-	if !strings.Contains(err.Error(), "actor") {
-		t.Errorf("error should name the missing actor, got %v", err)
-	}
-}
-
-func TestActorFlag(t *testing.T) {
-	h := startStore(t)
-	t.Setenv("HITS_ACTOR", "")
-
-	out := run(t, h.connector(), "--actor", "daan", "create", "--type", "bug", "some report")
-	wantContains(t, out, "reporter: daan")
-}
-
 func TestAPIErrorCodePassesThrough(t *testing.T) {
 	h := startStore(t)
-	t.Setenv("HITS_ACTOR", "daan")
 
 	err := runErr(t, h.connector(), "claim", "no-such-item")
 	if !strings.Contains(err.Error(), "not-found") {
@@ -317,7 +252,6 @@ func TestAPIErrorCodePassesThrough(t *testing.T) {
 }
 
 func TestBadFixedByFailsBeforeConnecting(t *testing.T) {
-	t.Setenv("HITS_ACTOR", "daan")
 	err := runErr(t, guardConnector(t), "transition", "some-id", "--to", "resolved", "--fixed-by", "nonsense")
 	if !strings.Contains(err.Error(), "bad --fixed-by") {
 		t.Errorf("want a --fixed-by parse error, got %v", err)
@@ -334,7 +268,6 @@ func TestMissingIDArgument(t *testing.T) {
 func TestJSONOutput(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "json roundtrip"))
 
@@ -351,17 +284,11 @@ func TestJSONOutput(t *testing.T) {
 func TestSearchCommand(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	match := itemID(t, run(t, connect, "create", "--type", "bug", "the parser crashes on unicode"))
 	run(t, connect, "create", "--type", "bug", "docs typo in the readme")
 
-	svc, err := search.Start(testCtx(t), h.svcConn)
-	if err != nil {
-		t.Fatalf("start search: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
+	waitSearch(t, h, "parser", 1)
 	out := run(t, connect, "search", "parser")
 	wantContains(t, out, match, "total: 1")
 	if strings.Contains(out, "docs typo") {
@@ -379,22 +306,16 @@ func TestSearchCommand(t *testing.T) {
 func TestSearchColumns(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "column selection fodder"))
 	run(t, connect, "claim", id)
 
-	svc, err := search.Start(testCtx(t), h.svcConn)
-	if err != nil {
-		t.Fatalf("start search: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
 	// --columns names the columns exactly, in the given order — repeatable
 	// and comma-separated, and a column empty in every row still shows when
 	// asked for.
+	waitSearch(t, h, "fodder", 1)
 	out := run(t, connect, "search", "fodder", "--columns", "id,claimed-by", "--columns", "closed")
-	wantContains(t, out, "claimed-by", "closed", "daan")
+	wantContains(t, out, "claimed-by", "closed", "admin")
 	if strings.Contains(out, "report") {
 		t.Errorf("--columns should render only the named columns:\n%s", out)
 	}
@@ -415,17 +336,11 @@ func TestSearchUnknownColumn(t *testing.T) {
 func TestSearchFanIsConfigurable(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	run(t, connect, "create", "--type", "bug", "fan fodder one")
 	run(t, connect, "create", "--type", "bug", "fan fodder two")
 
-	svc, err := search.Start(testCtx(t), h.svcConn)
-	if err != nil {
-		t.Fatalf("start search: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
+	waitSearch(t, h, "fodder", 2)
 	out := run(t, connect, "search", "fodder", "--fan", "1")
 	wantContains(t, out, "fan fodder one", "fan fodder two", "total: 2")
 
@@ -437,16 +352,10 @@ func TestSearchFanIsConfigurable(t *testing.T) {
 func TestSearchJSON(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "enriched json fodder"))
 
-	svc, err := search.Start(testCtx(t), h.svcConn)
-	if err != nil {
-		t.Fatalf("start search: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
+	waitSearch(t, h, "enriched", 1)
 	out := run(t, connect, "--json", "search", "enriched")
 	var reply struct {
 		Hits []struct {
@@ -471,85 +380,17 @@ func TestSearchJSON(t *testing.T) {
 func TestGraphCommand(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	run(t, connect, "project", "register", "hits", "HITS repo", "--initiative", "hits")
 	id := itemID(t, run(t, connect, "create", "--type", "bug", "--project", "hits", "graph fodder"))
 	run(t, connect, "claim", id)
 
-	svc, err := graph.Start(testCtx(t), h.svcConn)
-	if err != nil {
-		t.Fatalf("start graph: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
+	waitEdges(t, h, id, 4)
 	out := run(t, connect, "graph", "neighbors", id)
-	wantContains(t, out, "-[located-in]->", "project:hits", "actor:daan")
+	wantContains(t, out, "-[located-in]->", "project:hits", "actor:admin")
 
 	out = run(t, connect, "graph", "walk", id)
 	wantContains(t, out, "nodes:", "edges:", "item:"+id)
-}
-
-// fakeProvider is an OpenAI-API-compatible embedding endpoint producing
-// deterministic bag-of-words vectors, as in the client package's tests.
-func fakeProvider(t *testing.T) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Input string `json:"input"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": []map[string]any{{"embedding": bagOfWords(req.Input)}},
-		})
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func bagOfWords(text string) []float32 {
-	const dims = 64
-	vec := make([]float32, dims)
-	for _, word := range strings.Fields(strings.ToLower(text)) {
-		h := fnv.New32a()
-		_, _ = h.Write([]byte(word))
-		vec[h.Sum32()%dims]++
-	}
-	var norm float64
-	for _, v := range vec {
-		norm += float64(v) * float64(v)
-	}
-	if norm > 0 {
-		n := float32(math.Sqrt(norm))
-		for i := range vec {
-			vec[i] /= n
-		}
-	}
-	return vec
-}
-
-func TestSemanticCommand(t *testing.T) {
-	h := startStore(t)
-	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
-
-	match := itemID(t, run(t, connect, "create", "--type", "bug", "auth login loop keeps repeating"))
-	itemID(t, run(t, connect, "create", "--type", "bug", "the build cache misses every time"))
-
-	provider := fakeProvider(t)
-	svc, err := semantic.Start(testCtx(t), h.svcConn, semantic.Config{
-		BaseURL: provider.URL, APIKey: "test-key", Model: "fake-model",
-	})
-	if err != nil {
-		t.Fatalf("start semantic: %v", err)
-	}
-	t.Cleanup(svc.Stop)
-
-	out := run(t, connect, "semantic", "auth login loop", "--limit", "1")
-	wantContains(t, out, match)
 }
 
 // TestInitiativeCommands drives the initiative verbs: register, list,
@@ -559,7 +400,6 @@ func TestSemanticCommand(t *testing.T) {
 func TestInitiativeCommands(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("HITS_INITIATIVE", "") // fall through to the selected default
 
@@ -601,7 +441,6 @@ func TestInitiativeCommands(t *testing.T) {
 // TestCreateRequiresInitiative: with no flag, no env, and no selected
 // default, the create fails before dialing.
 func TestCreateRequiresInitiative(t *testing.T) {
-	t.Setenv("HITS_ACTOR", "daan")
 	t.Setenv("HITS_INITIATIVE", "")
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	err := runErr(t, guardConnector(t), "create", "--type", "bug", "no initiative anywhere")
@@ -610,23 +449,37 @@ func TestCreateRequiresInitiative(t *testing.T) {
 	}
 }
 
-// TestEditAssignsLegacyInitiative: the one edit the 0016 backfill runs —
-// --initiative alone must reach the wire (the nothing-to-change guard
-// once dropped it) and must land on a closed legacy item.
-func TestEditAssignsLegacyInitiative(t *testing.T) {
-	h := startStore(t)
-	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
+// waitSearch polls the text index — it trails the history — until the
+// query finds the expected number of items.
+func waitSearch(t *testing.T, h *harness, query string, total uint64) {
+	t.Helper()
+	c := client.New(h.cc, chronicletest.Store)
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		r, err := c.SearchItems(testCtx(t), client.SearchRequest{Query: query})
+		if err == nil && r.Total == total {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("search %q never found %d items: %+v %v", query, total, r, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
 
-	id := itemID(t, run(t, connect, "create", "--type", "bug", "a legacy-style record"))
-	run(t, connect, "resolve", id, "--fixed-by", "commit:abc closed before assignment")
-
-	// The harness mints prefixed IDs, so drive the edit through the same
-	// CLI path the backfill uses and assert the refusal is the server's
-	// initiative-immutable — proof the flag reached the wire — rather
-	// than the CLI's nothing-to-change.
-	err := runErr(t, connect, "edit", id, "--initiative", "hits")
-	if !strings.Contains(err.Error(), "initiative-immutable") {
-		t.Errorf("edit --initiative on a prefixed item = %v, want the server's initiative-immutable", err)
+// waitEdges polls the graph index until the item has at least n edges.
+func waitEdges(t *testing.T, h *harness, id string, n int) {
+	t.Helper()
+	c := client.New(h.cc, chronicletest.Store)
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		r, err := c.GraphNeighbors(testCtx(t), client.NeighborsRequest{Kind: client.NodeItem, ID: id})
+		if err == nil && len(r.Edges) >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("item %s never had %d edges: %+v %v", id, n, r, err)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
