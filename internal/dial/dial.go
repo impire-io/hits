@@ -13,6 +13,7 @@ import (
 	ccli "github.com/impire-io/chronicle/cli"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/contract"
 )
 
 // ErrNoContext is a dial with no context selected and none named.
@@ -33,5 +34,15 @@ func Context(name string) (*client.Client, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
-	return client.New(cc, cx.Store), cc.Close, nil
+	return client.New(cc, storeOf(cx.Store)), cc.Close, nil
+}
+
+// storeOf is the store a context's selection names — a context saved by
+// `chronicle login` selects none, and a HITS lives in the one store named
+// hits.
+func storeOf(selected string) string {
+	if selected == "" {
+		return contract.StoreName
+	}
+	return selected
 }
