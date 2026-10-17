@@ -142,7 +142,7 @@ func runGraph(inv *invocation) error {
 
 func runGraphNeighbors(inv *invocation, args []string) error {
 	fs := inv.flagSet("graph neighbors", "graph neighbors <id> [flags]")
-	kind := fs.String("kind", "item", "node kind: item, project, or actor")
+	kind := fs.String("kind", "item", "node kind: item, project, initiative, release, or actor")
 	direction := fs.String("direction", "", "edge direction: out, in, or both (the default)")
 	var types multiFlag
 	fs.Var(&types, "type", "narrow to the named edge types (repeatable)")
@@ -176,7 +176,7 @@ func runGraphNeighbors(inv *invocation, args []string) error {
 
 func runGraphWalk(inv *invocation, args []string) error {
 	fs := inv.flagSet("graph walk", "graph walk <id> [flags]")
-	kind := fs.String("kind", "item", "node kind: item, project, or actor")
+	kind := fs.String("kind", "item", "node kind: item, project, initiative, release, or actor")
 	depth := fs.Int("depth", 0, "expansion depth (service default 2, capped)")
 	direction := fs.String("direction", "", "edge direction: out, in, or both (the default)")
 	var types multiFlag
