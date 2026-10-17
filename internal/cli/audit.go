@@ -24,7 +24,8 @@ func runAudit(inv *invocation) error {
 	var mappings multiFlag
 	fs.Var(&mappings, "repo", "project slug and its local clone, <slug>=<path> (repeatable)")
 	initiative := fs.String("initiative", "", "narrow the tracker side to one initiative")
-	fan := fs.Int("fan", defaultFan, "concurrent item gets during the corpus walk")
+	fan := fs.Int("fan", defaultFan, "concurrent history reads when --since-seq is given")
+	sinceSeq := fs.Uint64("since-seq", 0, "report every write after this store sequence whose author chronicle did not vouch for (the cutover's sequence)")
 	if err := fs.Parse(inv.args); err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func runAudit(inv *invocation) error {
 		return err
 	}
 	defer closeConn()
-	items, err := walkCorpus(inv.ctx, c, *fan)
+	items, err := c.ListAllItems(inv.ctx)
 	if err != nil {
 		return err
 	}
@@ -83,6 +84,14 @@ func runAudit(inv *invocation) error {
 	findings := auditRefs(items, repos, *initiative)
 	findings = append(findings, auditMerges(items, repos, *initiative)...)
 	findings = append(findings, auditTargets(items, releases, *initiative)...)
+	findings = append(findings, auditGaps(items, *initiative)...)
+	if *sinceSeq > 0 {
+		more, err := auditUnverified(inv.ctx, c, items, *sinceSeq, *fan)
+		if err != nil {
+			return err
+		}
+		findings = append(findings, more...)
+	}
 	return inv.printAudit(findings, len(items), len(repos))
 }
 
@@ -169,75 +178,6 @@ func repoIdentity(url string) string {
 		return ""
 	}
 	return owner + "/" + repo
-}
-
-// walkCorpus enumerates the whole tracker: the legacy bare range plus
-// every live initiative's range — dense sequences all, each walked to
-// its first gap, no index consulted (decision 0016).
-func walkCorpus(ctx context.Context, c *client.Client, fan int) ([]contract.Item, error) {
-	items, err := walkItems(ctx, c, fan, "")
-	if err != nil {
-		return nil, err
-	}
-	initiatives, err := c.ListInitiatives(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list initiatives: %w", err)
-	}
-	sort.Slice(initiatives, func(a, b int) bool { return initiatives[a].Slug < initiatives[b].Slug })
-	for _, i := range initiatives {
-		more, err := walkItems(ctx, c, fan, i.Slug)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, more...)
-	}
-	return items, nil
-}
-
-// walkItems reads one dense range — the legacy bare IDs when prefix is
-// empty, else <prefix>-1 onward — until its first not-found. Gets fan
-// out a window of fan at a time so the wire round-trips overlap;
-// density means everything past the first gap is noise, so errors
-// beyond it are discarded with it.
-func walkItems(ctx context.Context, c *client.Client, fan int, prefix string) ([]contract.Item, error) {
-	id := func(n int) string {
-		if prefix == "" {
-			return strconv.Itoa(n)
-		}
-		return prefix + "-" + strconv.Itoa(n)
-	}
-	var items []contract.Item
-	for base := 1; ; base += fan {
-		batch := make([]*contract.Item, fan)
-		errs := make([]error, fan)
-		var wg sync.WaitGroup
-		for i := range fan {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				it, err := c.GetItem(ctx, id(base+i))
-				var apiErr *client.APIError
-				switch {
-				case err == nil:
-					batch[i] = &it
-				case errors.As(err, &apiErr) && apiErr.Code == "not-found":
-					// the end of the range falls in this window
-				default:
-					errs[i] = fmt.Errorf("get %s: %w", id(base+i), err)
-				}
-			}()
-		}
-		wg.Wait()
-		for i, it := range batch {
-			if it == nil {
-				if errs[i] != nil {
-					return nil, errs[i]
-				}
-				return items, nil
-			}
-			items = append(items, *it)
-		}
-	}
 }
 
 // finding is one audit result. Kind is a stable vocabulary: pr-unmerged,
@@ -482,4 +422,86 @@ func (inv *invocation) printAudit(findings []finding, items, repos int) error {
 		return fmt.Errorf("audit: %d failure(s)", fails)
 	}
 	return nil
+}
+
+// auditGaps lists the numbers an initiative's counter spent without an
+// item landing — a crash between the mint and the create (hits-hq
+// 02-DESIGN/the-store.md § the counter). A warning: a gap is never a reuse.
+// Tombstoned items count as landed: the number was not spent in vain.
+func auditGaps(items []contract.Item, initiative string) []finding {
+	highest := map[string]int{}
+	seen := map[string]map[int]bool{}
+	for _, it := range items {
+		prefix, ok := contract.ParseItemID(it.ID)
+		if !ok || prefix == "" {
+			continue
+		}
+		if initiative != "" && prefix != initiative {
+			continue
+		}
+		n, err := strconv.Atoi(it.ID[len(prefix)+1:])
+		if err != nil {
+			continue
+		}
+		if seen[prefix] == nil {
+			seen[prefix] = map[int]bool{}
+		}
+		seen[prefix][n] = true
+		if n > highest[prefix] {
+			highest[prefix] = n
+		}
+	}
+	findings := []finding{}
+	prefixes := make([]string, 0, len(highest))
+	for p := range highest {
+		prefixes = append(prefixes, p)
+	}
+	sort.Strings(prefixes)
+	for _, p := range prefixes {
+		for n := 1; n <= highest[p]; n++ {
+			if !seen[p][n] {
+				findings = append(findings, finding{Level: "warn", Kind: "numbering-gap", Item: fmt.Sprintf("%s-%d", p, n),
+					Detail: "the counter spent this number and no item landed on it: a crash between the mint and the create"})
+			}
+		}
+	}
+	return findings
+}
+
+// auditUnverified reads every item's history after the given sequence
+// and reports the writes chronicle did not vouch for — after the cutover,
+// every live write goes through the node, so an unverified one is a bare
+// writer's (hits-hq decision 0019).
+func auditUnverified(ctx context.Context, c *client.Client, items []contract.Item, since uint64, fan int) ([]finding, error) {
+	results := make([][]finding, len(items))
+	errs := make([]error, len(items))
+	sem := make(chan struct{}, fan)
+	var wg sync.WaitGroup
+	for i, it := range items {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			for op, err := range c.Chronicle().History(ctx, c.Store(), contract.ItemPath(it.ID)) {
+				if err != nil {
+					errs[i] = fmt.Errorf("history of %s: %w", it.ID, err)
+					return
+				}
+				if op.Seq > since && !op.Verified {
+					results[i] = append(results[i], finding{Level: "fail", Kind: "unverified-write", Item: it.ID,
+						Detail: fmt.Sprintf("operation %s at sequence %d names author %s and chronicle did not vouch for it", op.Type, op.Seq, op.Author)})
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	findings := []finding{}
+	for i := range items {
+		if errs[i] != nil {
+			return nil, errs[i]
+		}
+		findings = append(findings, results[i]...)
+	}
+	return findings, nil
 }

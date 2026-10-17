@@ -1,15 +1,14 @@
 module github.com/impire-io/hits
 
-go 1.26.0
+go 1.26.5
 
 require (
-	github.com/blevesearch/bleve/v2 v2.6.1
 	github.com/gofrs/flock v0.13.1
+	github.com/impire-io/chronicle v0.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/nats-io/nats-server/v2 v2.14.6
 	github.com/nats-io/nats.go v1.53.1
 	github.com/nats-io/nuid v1.0.1
-	github.com/philippgille/chromem-go v0.7.0
 	github.com/synadia-io/orbit.go/natscontext v0.1.3
 	golang.org/x/oauth2 v0.35.0
 )
@@ -18,6 +17,7 @@ require (
 	github.com/RoaringBitmap/roaring/v2 v2.14.5 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.7.2-default-no-op // indirect
 	github.com/bits-and-blooms/bitset v1.24.2 // indirect
+	github.com/blevesearch/bleve/v2 v2.6.1 // indirect
 	github.com/blevesearch/bleve_index_api v1.4.1 // indirect
 	github.com/blevesearch/geo v0.2.6 // indirect
 	github.com/blevesearch/go-faiss v1.1.5 // indirect
@@ -45,14 +45,17 @@ require (
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/nats-io/jwt/v2 v2.8.2 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.etcd.io/bbolt v1.4.0 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
+	sigs.k8s.io/yaml v1.4.0 // indirect
 )

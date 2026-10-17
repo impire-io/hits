@@ -65,10 +65,6 @@ func runReleaseRegister(inv *invocation, args []string) error {
 	if err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -76,7 +72,7 @@ func runReleaseRegister(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	r, err := c.RegisterRelease(inv.ctx, client.RegisterReleaseRequest{
-		Actor: actor, Initiative: init, Slug: lead[0], Name: lead[1], Description: *description,
+		Initiative: init, Slug: lead[0], Name: lead[1], Description: *description,
 	})
 	if err != nil {
 		return err
@@ -138,10 +134,6 @@ func runReleaseShip(inv *invocation, args []string) error {
 	if err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -149,7 +141,7 @@ func runReleaseShip(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	r, err := c.ShipRelease(inv.ctx, client.ShipReleaseRequest{
-		Actor: actor, Initiative: init, Slug: slug, Refs: shipRefs, Note: *note,
+		Initiative: init, Slug: slug, Refs: shipRefs, Note: *note,
 	})
 	if err != nil {
 		return err
@@ -179,10 +171,6 @@ func runReleaseRetire(inv *invocation, args []string) error {
 	if err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -190,7 +178,7 @@ func runReleaseRetire(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	r, err := c.RetireRelease(inv.ctx, client.RetireReleaseRequest{
-		Actor: actor, Initiative: init, Slug: slug, Reason: *reason,
+		Initiative: init, Slug: slug, Reason: *reason,
 	})
 	if err != nil {
 		return err

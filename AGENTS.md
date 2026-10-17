@@ -10,8 +10,8 @@ non-negotiables.
    is and refuses to become: headless issue tracking, the API is the product,
    agents are the first-class operators, nothing is lost.
 2. [`../hits-hq/00-META/how-we-build.md`](../hits-hq/00-META/how-we-build.md) —
-   the binding engineering postures: minimal build, ops-log as source of truth,
-   every component a NATS micro service, headless. When this repo and that
+   the binding engineering postures: minimal build, the history is the record
+   and chronicle keeps it, HITS runs no service of its own, headless. When this repo and that
    document disagree, that document wins.
 3. [`../hits-hq/00-META/repos.md`](../hits-hq/00-META/repos.md) — the repo map
    and what this repo owns.
@@ -24,55 +24,46 @@ non-negotiables.
 
 - **Quality gate before "done"**: `make check` (fmt + tidy + build + test +
   lint) — all green, no skipped tests, race detector on.
-- **The wire contract is tested against real NATS** (`internal/natstest` runs
-  an embedded server); mocking the NATS client is forbidden.
+- **Tested against real NATS**: every suite boots chronicle's quick start
+  in-process (`internal/chronicletest`); mocking the NATS client is
+  forbidden.
 - **Minimal build**: every addition names the present need it serves; "we might
   want it later" is not a need.
 - **One surface**: everything callable goes through the `client` package's
   contract; no side doors, no HTTP-first parallel surface.
-- **Connections go through `internal/connect`** — the one seam, resolving
-  hits contexts (`$XDG_CONFIG_HOME/hits/context/`: hits-owned documents,
-  the NATS connection nested under `nats` in the natscontext schema, plus
-  the optional `oauth` block), loaded via
-  `github.com/synadia-io/orbit.go/natscontext`. The nats CLI's contexts
-  are an import source for `hits context import`, never read at connect
-  time. Never hand-rolled URLs, never a direct `natscontext` dial outside
-  the seam (`hits-hq/02-DESIGN/idp-auth.md`, decision 0011).
+- **Connections go through `internal/dial`** — the one seam: a chronicle
+  context, loaded with chronicle's `cli.LoadContext` and dialled with
+  `Context.Dial`; the author of every write is the context's principal
+  (`hits-hq/02-DESIGN/the-client.md`, decision 0021). Never a hand-rolled
+  URL, never a dial outside the seam.
+- **Nothing of HITS runs as a service.** The store, its state and its indexes
+  are chronicle's; a client reads them exactly (the state, then the
+  operations after it folded) and writes the difference the model's own
+  fold produced, through chronicle's node under the guard.
 - Commits are signed. `.claude/settings.local.json` is never committed.
 
 ## Layout
 
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
-  an injectable connector). Its `up` subcommand runs the whole service fleet
-  in one process, dispatched to `internal/fleet` before the client parser so
-  the client tree never imports service code.
-- `internal/fleet` — the composition root behind `hits up`: starts all four
-  services fail-fast on one shared connection named `hits-up` — micro
-  services multiplex on it, so the whole platform costs a single seat in
-  the account's connection allowance (decision 0006); the semantic index
-  only when the embedding provider is configured
-  (`hits-hq/02-DESIGN/hits-up.md`). Nothing imports it back —
-  depguard-enforced, like the rest of the boundary.
+  an injectable connector). Its `store init` declares a HITS in a chronicle
+  account; `migrate` (release 0.8.0 only) moves a fleet-era install in.
 - `cmd/hits-mcp` — the MCP server binary, the agent action surface; thin main
   over `internal/mcp` (stdio MCP via the official Go SDK, one tool per client
-  endpoint, actor fixed at startup). An adapter like the CLI, never a fleet
-  peer — the adapter boundary is depguard-enforced both ways.
-- `cmd/hits-node` — service binary; thin main over `internal/node`.
-- `cmd/hits-index-graph` — the graph index service; thin main over
-  `internal/index/graph` (adjacency projection with derived project/actor
-  edges, serving `hits.graph.*`).
-- `cmd/hits-index-search` — the full-text index service; thin main over
-  `internal/index/search` (a Bleve projection of the ops-log answering
-  `hits.search.query`). Index services never import `internal/node`, nor it
-  them (depguard-enforced).
-- `cmd/hits-index-semantic` — the semantic index service; thin main over
-  `internal/index/semantic` (chromem-go embedding projection with a
-  configurable OpenAI-compatible provider, serving `hits.semantic.query`).
-- `contract` — the shared platform contract: op envelope and catalog, item
-  and project models, invariants, and the pure fold. Every service imports
-  it; it imports no other hits package (depguard-enforced).
-- `client` — the public Go client package. It also declares the wire contract
-  (subjects, payload types); `internal/node` implements it. Imports only
-  `contract` (depguard-enforced).
+  method). An adapter like the CLI, never a service.
+- `contract` — the shared contract: op envelope and catalog, item and
+  vocabulary models, invariants, the pure fold, and `state.go` — the mapping
+  between the model and chronicle's state (paths, `ItemState`, `Diff`). It
+  imports no other hits package (depguard-enforced).
+- `client` — the public Go client package on chronicle's Go client
+  (`hits-hq/02-DESIGN/the-client.md`): the store's declarations (`store.go`),
+  the write loop, the reads and the three queries. Imports `contract` and
+  chronicle; never `internal` (depguard-enforced).
+- `internal/dial` — the one connection seam: a chronicle context, loaded and
+  dialled as chronicle's CLI dials it. Never a hand-rolled URL.
+- `internal/config` — the selected initiative, the client's one piece of
+  configuration.
+- `internal/connect` — the fleet-era hits contexts, kept for `migrate` alone;
+  leaves with release 0.9.0.
+- `internal/chronicletest` — chronicle's quick start in-process for every
+  test suite.
 - `internal/version` — the build-stamped version shared by both binaries.
-- `internal/natstest` — test-only embedded NATS server.

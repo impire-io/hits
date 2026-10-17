@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/impire-io/hits/client"
-	"github.com/impire-io/hits/internal/connect"
+	"github.com/impire-io/hits/internal/config"
 )
 
 func runInitiative(inv *invocation) error {
@@ -47,10 +47,6 @@ func runInitiativeRegister(inv *invocation, args []string) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -58,7 +54,7 @@ func runInitiativeRegister(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	i, err := c.RegisterInitiative(inv.ctx, client.RegisterInitiativeRequest{
-		Actor: actor, Slug: lead[0], Name: lead[1], Description: *description,
+		Slug: lead[0], Name: lead[1], Description: *description,
 	})
 	if err != nil {
 		return err
@@ -90,10 +86,6 @@ func runInitiativeRetire(inv *invocation, args []string) error {
 		fs.Usage()
 		return errors.New("initiative retire: --reason is required")
 	}
-	actor, err := inv.actorOrErr()
-	if err != nil {
-		return err
-	}
 
 	c, closeConn, err := inv.dial()
 	if err != nil {
@@ -101,7 +93,7 @@ func runInitiativeRetire(inv *invocation, args []string) error {
 	}
 	defer closeConn()
 	i, err := c.RetireInitiative(inv.ctx, client.RetireInitiativeRequest{
-		Actor: actor, Slug: lead[0], Reason: *reason,
+		Slug: lead[0], Reason: *reason,
 	})
 	if err != nil {
 		return err
@@ -165,7 +157,7 @@ func runInitiativeSelect(inv *invocation, args []string) error {
 	if !found {
 		return fmt.Errorf("initiative select: %q is not a registered initiative", slug)
 	}
-	if err := connect.SaveDefaultInitiative(slug); err != nil {
+	if err := config.SaveDefaultInitiative(slug); err != nil {
 		return err
 	}
 	fmt.Fprintf(inv.out, "selected initiative: %s\n", slug)

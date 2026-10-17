@@ -1,10 +1,11 @@
 # hits
 
-HITS is a headless, agent-native issue tracking system. There is no web UI
-and no HTTP API: the platform is a set of NATS micro services, agents
-operate it through an MCP server, and humans through a CLI. It runs against
-the NATS system you already have — [Synadia Cloud](https://www.synadia.com/cloud)
-or your own JetStream-enabled server — and owns no infrastructure of its own.
+HITS is a headless, agent-native issue tracking system, built on
+[chronicle](https://github.com/impire-io/chronicle). There is no web UI and
+no HTTP API: a HITS is one store in a chronicle account — four types,
+three indexes, every change an operation with an author in the history —
+and the two binaries here are clients of it. Agents operate it through an
+MCP server, humans through a CLI. Nothing of HITS runs as a service.
 
 The mission, designs, decisions, and process live in
 [`hits-hq`](../hits-hq/); this repo carries the code. Agents working in this
@@ -12,8 +13,8 @@ repo: read [AGENTS.md](AGENTS.md) first.
 
 ## Getting started
 
-**1. Get the binaries.** One brew install gets both `hits` (the CLI, which
-can also run the whole platform) and `hits-mcp` (the MCP server for agents):
+**1. Get the binaries.** One brew install gets both `hits` (the CLI) and
+`hits-mcp` (the MCP server for agents):
 
 ```sh
 brew install impire-io/tap/hits
@@ -28,59 +29,51 @@ go install github.com/impire-io/hits/cmd/hits@latest
 go install github.com/impire-io/hits/cmd/hits-mcp@latest
 ```
 
-**2. Point it at a NATS system.** The system needs JetStream enabled; one
-account (or JetStream domain) hosts one HITS. For configuration worth
-keeping, save a hits context; the client commands connect through one:
+**2. Have a chronicle to speak to.** HITS connects through a chronicle
+context, saved by chronicle's own CLI (`brew install impire-io/tap/chronicle`):
 
 ```sh
-hits context add hits          # scaffold a context file and edit it, or
-hits context import hits       # wrap an existing nats CLI context
+chronicle login                      # the hosted account at chronicle.impire.dev, or
+chronicle context add prod --url nats://nats.acme.example:4222 --creds hits.creds
+                                     # a credential on the NATS you already run, with chronicle's node on it
+chronicle up                         # or a local quick start, for a try
 ```
 
-**3. Run the platform** — against a context, or with the connection
-passed directly. The plain flags are named as the nats CLI names them
-(`--server`, `--creds`, `--user`/`--password`, `--nkey`,
-`--tlscert`/`--tlskey`, `--tlsca`), and each falls back to the nats CLI's
-environment variable (`NATS_URL`, `NATS_CREDS`, ...) — handy in CI and
-containers, where the environment is the configuration:
+The selected context is the one `hits` speaks through; `--context <name>`
+names another. Every write's author is the context's principal — your
+GitHub login on the hosted account, a service account's name for an agent
+— and chronicle vouches for it.
+
+**3. Declare the store**, once per account:
 
 ```sh
-# your own server
-hits up --server nats://localhost:4222
-
-# Synadia Cloud: NGS with the creds file of a JetStream-enabled account
-hits up --server tls://connect.ngs.global --creds ~/ngs/hits.creds
-
-# a saved context, or the NATS_* environment
-hits up --context hits
-NATS_URL=nats://localhost:4222 hits up
+hits store init
 ```
 
-That single process runs the whole service fleet — the item store plus the
-graph and full-text indexes. Nothing to provision first: the ops-log stream
-and its projections are created on boot. The fleet shares one NATS
-connection, and every resource declares a byte budget (1 GiB for the ops
-log by default — some accounts, Synadia Cloud included, require one);
-change it with `--max-bytes 2G`. Runs in the foreground until interrupted.
+It creates the store `hits` with full history, defines the four types with
+their lifecycle rules, declares the search, meaning and relation indexes,
+and announces HITS to the account's console. Running it again finishes
+what was left; nothing is created twice.
 
-**4. Work with it.** Every write names an actor — set `HITS_ACTOR` (or pass
-`--actor`) to your handle:
+**4. Work with it.**
 
 ```sh
-export HITS_ACTOR=daan
-
-hits --context hits project register hits "The hits repo"
-hits --context hits create --type bug --project hits "login loop keeps repeating"
-hits --context hits search login
-hits --context hits graph neighbors 1
-hits --context hits claim 1
-hits --context hits resolve 1 --fixed-by pr:42
+hits initiative register acme "Acme"
+hits initiative select acme
+hits project register acme-web "The web app"
+hits create --type bug --project acme-web "login loop keeps repeating"
+hits search login
+hits graph neighbors acme-1
+hits claim acme-1
+hits resolve acme-1 --fixed-by pr:acme/web#42
 ```
 
-Run `hits` with no arguments for the full command list.
+Run `hits` with no arguments for the full command list. Every item verb,
+the three vocabularies, `search`, `semantic`, `graph` and `audit` read as
+they always have.
 
 **5. Hand it to your agents.** `hits-mcp` is a stdio MCP server exposing the
-full client surface as tools, one tool per endpoint. For example, in an MCP
+full client surface as tools, one tool per method. For example, in an MCP
 client configuration:
 
 ```json
@@ -88,15 +81,14 @@ client configuration:
   "mcpServers": {
     "hits": {
       "command": "hits-mcp",
-      "args": ["--context", "hits"],
-      "env": { "HITS_ACTOR": "my-agent" }
+      "args": ["--context", "prod"]
     }
   }
 }
 ```
 
-One server serves one agent under one actor; a host running several agents
-runs several servers.
+One server serves one agent on one context — the context is who the agent
+is. A host running several agents runs several servers.
 
 Agents that drive the CLI directly can learn it from the `hits-cli` skill,
 published in [`impire-marketplace`](https://github.com/impire-io/impire-marketplace)
@@ -105,94 +97,39 @@ and as a Claude Code plugin (`/plugin marketplace add impire-io/impire-marketpla
 then `/plugin install hits@impire`). The skill also covers installing the
 binary itself.
 
-**Optional: semantic search.** The semantic index needs an
-OpenAI-API-compatible embedding provider and is off unless configured:
+**Semantic search** needs an embedding provider on the chronicle install —
+the install's configuration, not HITS's; `hits semantic <text>` joins the
+query surface where one is configured.
 
-```sh
-export HITS_EMBEDDING_API_KEY=...
-hits up --context hits --embedding-url https://api.openai.com/v1 --embedding-model text-embedding-3-small
-```
+## The install manifest
 
-Everything else works without it; `hits semantic <text>` joins the query
-surface when it is on.
+A hosted chronicle console can enable a HITS for an account from the
+install manifest the release carries, `install.json` — the same
+declaration `hits store init` applies, as data (`hits store manifest`
+prints it). It names the store, the types and the announcement, never a
+credential.
 
-**Optional: SSO through your IDP.** Deployments fronting NATS with an
-[auth callout](https://docs.nats.io/running-a-nats-service/configuration/securing_nats/auth_callout)
-that accepts OAuth access tokens can log in through their IDP instead of
-handing out creds files. Auth rides a **hits context**: the same JSON
-schema as a nats context, in a directory hits owns
-(`~/.config/hits/context/`), plus one extra field — the `oauth` block:
+## Moving an existing install
 
-```json
-{
-  "url": "tls://nats.example.com:4222",
-  "oauth": {
-    "issuer": "https://idp.example.com",
-    "client_id": "hits-cli"
-  }
-}
-```
+Release 0.8.0 carries one verb for the cutover from a HITS that ran its own
+fleet: `hits migrate --from <hits context>` reads that install's `hits-ops`
+stream and writes every operation into the store with its original id,
+actor and time, then verifies every entity's state against the old
+install's own fold and refuses the move on any difference. The verb leaves
+with 0.9.0.
 
-```sh
-hits auth login --context example   # device flow: open the URL, enter the code
-hits --context example search login # everything else just works
-```
+## What a HITS keeps
 
-`hits auth login` is the one interactive moment: it runs the RFC 8628
-device flow (works over SSH, no browser needed on the machine) and caches
-the tokens under `~/.local/state/hits/tokens/`. Every connect and
-reconnect — CLI, `hits up`, `hits-mcp` — presents the current access
-token, refreshing it through the refresh token as needed; long-lived
-processes heal across token expiry without restarts. `hits auth status`
-and `hits auth logout` complete the family. Validating the token is your
-deployment's job: HITS performs the exchange, your auth callout decides
-what the token means. Everything a nats context can carry — creds files,
-static tokens, TLS — works in a hits context too, loaded by the same
-library; contexts from the nats CLI keep working untouched, and a name
-must live in only one of the two directories.
-
-**Optional: client defaults.** `~/.config/hits/config.json` holds
-per-user defaults, so neither flag nor env var is required every time:
-
-```json
-{ "defaults": { "context": "example", "actor": "daan" } }
-```
-
-Precedence stays flag, then environment, then the default.
-
-## Layout
-
-| Path | What it is |
-|---|---|
-| `cmd/hits` | The terminal client, and — through `hits up` — the whole fleet in one process (thin main; logic in `internal/cli` and `internal/fleet`). |
-| `cmd/hits-mcp` | The MCP server: the agent action surface (thin main; logic in `internal/mcp`). |
-| `cmd/hits-node` | The item-store micro service, standalone (thin main; logic in `internal/node`). |
-| `cmd/hits-index-graph` | The graph index service, standalone (thin main; logic in `internal/index/graph`). |
-| `cmd/hits-index-search` | The full-text index service, standalone (thin main; logic in `internal/index/search`). |
-| `cmd/hits-index-semantic` | The semantic index service, standalone (thin main; logic in `internal/index/semantic`). |
-| `contract` | The shared platform contract: op envelope, item model, invariants, fold, resource names. |
-| `client` | The public Go client package — the one way callers talk to the services. |
-
-`hits up` is the getting-started and small-team shape; the standalone
-service binaries compose the same fleet as separate processes when you want
-them scheduled individually. Build them with `make build`.
-
-## Build & run from source
-
-```sh
-make check   # fmt + tidy + build + test + lint — the quality gate
-make build   # all binaries land in bin/
-```
-
-## Releases
-
-Pushing a `v*` tag builds and publishes a GitHub release via goreleaser
-([release workflow](.github/workflows/release.yml)): one archive per
-platform carrying `hits` and `hits-mcp`, with the tag's version stamped into
-every binary. CI runs the same gate as `make check` on every push and pull
-request.
+Items with a lifecycle — bug, task, improvement; open, diagnosing,
+located, blocked, resolved, wontfix — their claims, blocks with memory,
+typed links, trail of notes and closing refs; three registered
+vocabularies: initiatives, the projects inside them, and the releases
+items aim at. The model is `hits-hq`'s
+[`02-DESIGN/item-model.md`](../hits-hq/02-DESIGN/item-model.md); where it
+lives is [`02-DESIGN/the-store.md`](../hits-hq/02-DESIGN/the-store.md).
 
 ## License
 
 [Sustainable Use License](LICENSE) — free for internal business,
-non-commercial, and personal use.
+non-commercial, and personal use. Contributions under the DCO
+([CONTRIBUTING.md](CONTRIBUTING.md)).

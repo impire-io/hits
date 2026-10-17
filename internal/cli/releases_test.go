@@ -12,7 +12,6 @@ import (
 func TestReleaseCommands(t *testing.T) {
 	h := startStore(t)
 	connect := h.connector()
-	t.Setenv("HITS_ACTOR", "daan")
 
 	out := run(t, connect, "release", "register", "0.5", "The 0.5 release", "--description", "first cut")
 	wantContains(t, out, "hits 0.5", "The 0.5 release", "first cut")
