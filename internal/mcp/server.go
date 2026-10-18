@@ -25,11 +25,11 @@ import (
 // Connector opens the client the server talks through, with the function
 // that closes its connection. Production use dials a chronicle context;
 // tests inject a client on an in-process chronicle.
-type Connector func(contextName string) (*client.Client, func(), error)
+type Connector func(contextName string) (client.Client, func(), error)
 
 // ContextConnector dials the named chronicle context ("" means the
 // selected one).
-func ContextConnector(contextName string) (*client.Client, func(), error) {
+func ContextConnector(contextName string) (client.Client, func(), error) {
 	return dial.Context(contextName)
 }
 
@@ -78,7 +78,7 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 // means adding its tool here in the same change. initiative is the filing
 // default create_item falls back to; "" means every create must name its
 // own.
-func NewServer(c *client.Client, initiative string) *sdk.Server {
+func NewServer(c client.Client, initiative string) *sdk.Server {
 	s := sdk.NewServer(&sdk.Implementation{Name: "hits", Version: version.Version}, nil)
 	addItemTools(s, c, initiative)
 	addQueryTools(s, c)

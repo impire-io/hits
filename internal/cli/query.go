@@ -71,7 +71,7 @@ func runSearch(inv *invocation) error {
 // flight at once, and hit order is preserved. A hit whose item is gone (a
 // tombstone race) keeps its id and score with no snapshot; any other failure
 // fails the whole command rather than presenting a silently partial table.
-func fetchRows(ctx context.Context, c *client.Client, hits []client.SearchHit, fan int) ([]searchRow, error) {
+func fetchRows(ctx context.Context, c client.Client, hits []client.SearchHit, fan int) ([]searchRow, error) {
 	rows := make([]searchRow, len(hits))
 	errs := make([]error, len(hits))
 	sem := make(chan struct{}, fan)

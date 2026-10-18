@@ -13,6 +13,7 @@ import (
 	ccli "github.com/impire-io/chronicle/cli"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 )
 
@@ -22,7 +23,7 @@ var ErrNoContext = errors.New("no chronicle context: run 'chronicle login' for t
 // Context dials the named chronicle context ("" is the selection) and
 // returns the HITS client on it with the function that closes the
 // connection.
-func Context(name string) (*client.Client, func(), error) {
+func Context(name string) (client.Client, func(), error) {
 	cx, ok, err := ccli.LoadContext(name)
 	if err != nil {
 		return nil, nil, err
@@ -34,7 +35,7 @@ func Context(name string) (*client.Client, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
-	return client.New(cc, storeOf(cx.Store)), cc.Close, nil
+	return chronicle.New(cc, storeOf(cx.Store)), cc.Close, nil
 }
 
 // storeOf is the store a context's selection names — a context saved by

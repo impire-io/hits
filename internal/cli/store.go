@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/internal/version"
 )
 
@@ -34,18 +34,18 @@ func runStoreInit(inv *invocation, args []string) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	c, closeConn, err := inv.dial()
+	c, closeConn, err := inv.dialChronicle()
 	if err != nil {
 		return err
 	}
 	defer closeConn()
-	if err := client.Init(inv.ctx, c.Chronicle(), c.Store(), *ver); err != nil {
+	if err := chronicle.Init(inv.ctx, c.Chronicle(), c.Store(), *ver); err != nil {
 		return err
 	}
 	if inv.json {
-		return emit(inv.out, map[string]any{"store": c.Store(), "types": len(client.TypeDeclarations()), "indexes": len(client.IndexDeclarations()), "announced": client.AnnouncementPath})
+		return emit(inv.out, map[string]any{"store": c.Store(), "types": len(chronicle.TypeDeclarations()), "indexes": len(chronicle.IndexDeclarations()), "announced": chronicle.AnnouncementPath})
 	}
-	fmt.Fprintf(inv.out, "store %s declared: %d types, %d indexes, announced as %s\n", c.Store(), len(client.TypeDeclarations()), len(client.IndexDeclarations()), client.AnnouncementPath)
+	fmt.Fprintf(inv.out, "store %s declared: %d types, %d indexes, announced as %s\n", c.Store(), len(chronicle.TypeDeclarations()), len(chronicle.IndexDeclarations()), chronicle.AnnouncementPath)
 	return nil
 }
 
@@ -58,7 +58,7 @@ func runStoreManifest(inv *invocation, args []string) error {
 	if err := noTrailing(fs); err != nil {
 		return err
 	}
-	b, err := client.Manifest(*ver)
+	b, err := chronicle.Manifest(*ver)
 	if err != nil {
 		return err
 	}

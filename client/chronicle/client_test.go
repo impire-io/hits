@@ -1,4 +1,4 @@
-package client_test
+package chronicle_test
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 	"github.com/impire-io/chronicle/index/semantic"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/chronicletest"
 )
@@ -478,7 +479,7 @@ func bagOfWords(text string) []float32 {
 func TestSemanticSearch(t *testing.T) {
 	provider := fakeProvider(t)
 	cc := chronicletest.StartWith(t, &semantic.ProviderConfig{BaseURL: provider.URL, APIKey: "test-key", Model: "fake-model"})
-	c := client.New(cc, chronicletest.Store)
+	c := chronicle.New(cc, chronicletest.Store)
 	ctx := testCtx(t)
 	a := call(c.CreateItem(ctx, client.CreateItemRequest{Type: contract.Bug, Report: "the login page loops forever on a stale cookie", Initiative: "hits"})).must(t)
 	b := call(c.CreateItem(ctx, client.CreateItemRequest{Type: contract.Bug, Report: "the invoice total is rounded the wrong way", Initiative: "hits"})).must(t)

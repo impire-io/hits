@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 )
 
@@ -90,7 +91,11 @@ func runAudit(inv *invocation) error {
 	findings = append(findings, auditTargets(items, releases, *initiative)...)
 	findings = append(findings, auditGaps(items, *initiative)...)
 	if *sinceSeq > 0 {
-		more, err := auditUnverified(inv.ctx, c, items, *sinceSeq, *fan)
+		cc, ok := c.(*chronicle.Client)
+		if !ok {
+			return fmt.Errorf("--since-seq: %w", errNotChronicle)
+		}
+		more, err := auditUnverified(inv.ctx, cc, items, *sinceSeq, *fan)
 		if err != nil {
 			return err
 		}
@@ -103,7 +108,7 @@ func runAudit(inv *invocation) error {
 // <initiative>.<slug> — the net the target audit checks against. Retired
 // releases are not listed, so a stray target on one reads as unknown,
 // which is exactly the stray guardless retirement leaves (decision 0017).
-func loadReleases(ctx context.Context, c *client.Client) (map[string]contract.Release, error) {
+func loadReleases(ctx context.Context, c client.Client) (map[string]contract.Release, error) {
 	initiatives, err := c.ListInitiatives(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list initiatives: %w", err)
@@ -476,7 +481,7 @@ func auditGaps(items []contract.Item, initiative string) []finding {
 // and reports the writes chronicle did not vouch for — after the cutover,
 // every live write goes through the node, so an unverified one is a bare
 // writer's (hits-hq decision 0019).
-func auditUnverified(ctx context.Context, c *client.Client, items []contract.Item, since uint64, fan int) ([]finding, error) {
+func auditUnverified(ctx context.Context, c *chronicle.Client, items []contract.Item, since uint64, fan int) ([]finding, error) {
 	results := make([][]finding, len(items))
 	errs := make([]error, len(items))
 	sem := make(chan struct{}, fan)

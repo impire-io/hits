@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/internal/dial"
 	"github.com/impire-io/hits/internal/version"
 )
@@ -78,11 +79,11 @@ const defaultFan = 8
 // Connector opens the client a command talks through, with the function
 // that closes its connection. Production use dials a chronicle context;
 // tests inject a client on an in-process chronicle.
-type Connector func(contextName string) (*client.Client, func(), error)
+type Connector func(contextName string) (client.Client, func(), error)
 
 // ContextConnector dials the named chronicle context ("" means the
 // selected one).
-func ContextConnector(contextName string) (*client.Client, func(), error) {
+func ContextConnector(contextName string) (client.Client, func(), error) {
 	return dial.Context(contextName)
 }
 
@@ -185,14 +186,32 @@ func (inv *invocation) flagSet(name, usage string) *flag.FlagSet {
 	return fs
 }
 
-// dial connects through the chronicle context; the returned func closes
-// the connection.
-func (inv *invocation) dial() (*client.Client, func(), error) {
+// dial connects through the context; the returned func closes the
+// connection.
+func (inv *invocation) dial() (client.Client, func(), error) {
 	c, closeConn, err := inv.connect(inv.contextName)
 	if err != nil {
 		return nil, nil, err
 	}
 	return c, closeConn, nil
+}
+
+// errNotChronicle is a verb that speaks to chronicle alone — store init,
+// migrate, the audit's cutover read — dialled on a 0.7 fleet.
+var errNotChronicle = errors.New("this verb speaks to a chronicle context; the context dialled is a 0.7 fleet")
+
+// dialChronicle is dial for the verbs that are chronicle's alone.
+func (inv *invocation) dialChronicle() (*chronicle.Client, func(), error) {
+	c, closeConn, err := inv.dial()
+	if err != nil {
+		return nil, nil, err
+	}
+	cc, ok := c.(*chronicle.Client)
+	if !ok {
+		closeConn()
+		return nil, nil, errNotChronicle
+	}
+	return cc, closeConn, nil
 }
 
 // errFlagsFirst signals that the first argument is a flag where a positional
