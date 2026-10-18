@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	ccli "github.com/impire-io/chronicle/cli"
 	chron "github.com/impire-io/chronicle/client"
 	"github.com/impire-io/chronicle/devdir"
 	"github.com/impire-io/chronicle/index/semantic"
@@ -52,6 +53,14 @@ func StartWith(t *testing.T, embedding *semantic.ProviderConfig) *chron.Client {
 		t.Fatalf("chronicle up: %v", err)
 	}
 	t.Cleanup(l.Stop)
+	// The context chronicle's own `up` would save: the dial seam's tests
+	// load it as the selection.
+	if err := ccli.SaveLocalContext(l.URL, dir); err != nil {
+		t.Fatalf("save the local context: %v", err)
+	}
+	if err := ccli.SelectContext(ccli.LocalContextName); err != nil {
+		t.Fatalf("select the local context: %v", err)
+	}
 	cc, err := chron.ConnectNkeyFile(l.URL, devdir.UserNkeyPath(dir), "admin")
 	if err != nil {
 		t.Fatalf("connect: %v", err)

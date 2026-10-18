@@ -1,7 +1,7 @@
-// Package client is the Go surface of HITS: every caller — the CLI, the MCP
-// server, tests — goes through it, and there is no side door. It stands on
-// chronicle's Go client (hits-hq 02-DESIGN/the-client.md): a write reads
-// the instance's state, checks the command against the model's invariants,
+// Package chronicle is the client on chronicle (hits-hq 02-DESIGN/the-client.md,
+// decision 0021): the store's declarations, the write loop and the reads
+// of a HITS that lives in a chronicle account. A write reads the
+// instance's state, checks the command against the model's invariants,
 // folds the next state with the contract's own fold, and sends the
 // difference through chronicle's node under the expected-sequence guard;
 // a read is chronicle's read of state, history, listings and indexes.

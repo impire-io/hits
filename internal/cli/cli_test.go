@@ -484,3 +484,10 @@ func waitEdges(t *testing.T, h *harness, id string, n int) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// TestPingNamesTheStore: ping on a chronicle context is the store's
+// announcement.
+func TestPingNamesTheStore(t *testing.T) {
+	h := startStore(t)
+	wantContains(t, run(t, h.connector(), "ping"), "hits test")
+}

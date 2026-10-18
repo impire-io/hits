@@ -5,7 +5,11 @@ HITS is a headless, agent-native issue tracking system, built on
 no HTTP API: a HITS is one store in a chronicle account — four types,
 three indexes, every change an operation with an author in the history —
 and the two binaries here are clients of it. Agents operate it through an
-MCP server, humans through a CLI. Nothing of HITS runs as a service.
+MCP server, humans through a CLI. Nothing of HITS runs as a service. The
+same two binaries still speak to a HITS of release 0.7.0, the one that ran
+its own fleet: that fleet is frozen at its release and gets no fix, but
+the client reaches it through a hits context, and the sentences are the
+same on both.
 
 The mission, designs, decisions, and process live in
 [`hits-hq`](../hits-hq/); this repo carries the code. Agents working in this
@@ -42,7 +46,22 @@ chronicle up                         # or a local quick start, for a try
 The selected context is the one `hits` speaks through; `--context <name>`
 names another. Every write's author is the context's principal — your
 GitHub login on the hosted account, a service account's name for an agent
-— and chronicle vouches for it.
+— and chronicle vouches for it; `--actor` is refused here.
+
+**Or a 0.7 fleet.** A HITS that still runs hits-node and its index
+services (release 0.7.0, frozen) is reached through a hits context, as it
+always was:
+
+```sh
+hits context add team --url nats://nats.acme.example:4222   # or 'hits context import' from a nats context
+hits --context team --actor you ping
+```
+
+A name resolves against chronicle's contexts first, then hits's own; with
+no `--context`, chronicle's selection, else hits's default. A write on a
+hits context needs an actor — `--actor`, `HITS_ACTOR`, or the hits config's
+default — because the 0.7 node validates a claimed actor. `hits ping`
+names what answers on either substrate.
 
 **3. Declare the store**, once per account:
 
@@ -88,7 +107,9 @@ client configuration:
 ```
 
 One server serves one agent on one context — the context is who the agent
-is. A host running several agents runs several servers.
+is. A host running several agents runs several servers. On a hits context
+the server takes the actor at startup (`--actor`, or `HITS_ACTOR`), as 0.7
+did; on a chronicle context it refuses one.
 
 Agents that drive the CLI directly can learn it from the `hits-cli` skill,
 published in [`impire-marketplace`](https://github.com/impire-io/impire-marketplace)
@@ -111,12 +132,12 @@ credential.
 
 ## Moving an existing install
 
-Release 0.8.0 carries one verb for the cutover from a HITS that ran its own
-fleet: `hits migrate --from <hits context>` reads that install's `hits-ops`
-stream and writes every operation into the store with its original id,
-actor and time, then verifies every entity's state against the old
-install's own fold and refuses the move on any difference. The verb leaves
-with 0.9.0.
+`hits migrate --from <hits context>`, run on a chronicle context, moves a
+0.7 fleet's HITS in: it reads that install's `hits-ops` stream and writes
+every operation into the store with its original id, actor and time, then
+verifies every entity's state against the old install's own fold and
+refuses the move on any difference. The verb stays as long as a 0.7 fleet
+exists; a fleet that needs a fix moves, it is not fixed.
 
 ## What a HITS keeps
 

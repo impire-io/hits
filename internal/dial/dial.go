@@ -39,13 +39,19 @@ var ErrNoActor = errors.New("no actor for the 0.7 fleet: pass --actor, set HITS_
 // HITS_ACTOR, else the hits config's default, and one of them must name
 // somebody.
 func Context(name, actor string) (client.Client, func(), error) {
-	cx, chron, err := ccli.LoadContext(name)
-	if err != nil {
-		return nil, nil, err
-	}
 	hitsName, hits, err := connect.Resolve(name)
 	if err != nil {
 		return nil, nil, err
+	}
+	// chronicle's loader refuses a name it does not hold; a hits context
+	// of that name is then what the name means.
+	cx, chron, err := ccli.LoadContext(name)
+	if err != nil {
+		if hits {
+			chron = false
+		} else {
+			return nil, nil, fmt.Errorf("%w; a 0.7 fleet is reached through a hits context ('hits context add')", err)
+		}
 	}
 	switch {
 	case chron && hits && name != "":

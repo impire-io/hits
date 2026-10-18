@@ -16,7 +16,23 @@ import (
 // initiative minted, as the 0.7 audit did.
 const listFan = 8
 
+// GetItem reads one item. The 0.7 node answers a tombstoned item as it
+// is; the surface says a tombstoned item is not found (the-client.md §
+// reads), so the client says so on both substrates.
 func (c *Client) GetItem(ctx context.Context, id string) (contract.Item, error) {
+	it, err := c.get(ctx, id)
+	if err != nil {
+		return contract.Item{}, err
+	}
+	if it.Tombstoned {
+		return contract.Item{}, &client.APIError{Code: "not-found", Message: "item " + id + " is tombstoned"}
+	}
+	return it, nil
+}
+
+// get is the node's answer as it is, tombstoned items included — the
+// listing walks over them.
+func (c *Client) get(ctx context.Context, id string) (contract.Item, error) {
 	return request[contract.Item](ctx, c, GetSubject, client.GetItemRequest{ID: id})
 }
 
@@ -73,7 +89,7 @@ func (c *Client) walk(ctx context.Context, prefix string) ([]contract.Item, erro
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				it, err := c.GetItem(ctx, id(base+i))
+				it, err := c.get(ctx, id(base+i))
 				var apiErr *client.APIError
 				switch {
 				case err == nil:
@@ -97,46 +113,57 @@ func (c *Client) walk(ctx context.Context, prefix string) ([]contract.Item, erro
 	}
 }
 
+// CreateItem files an item through the node, as the client's actor.
 func (c *Client) CreateItem(ctx context.Context, r client.CreateItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, CreateSubject, r)
 }
 
+// EditItem changes non-lifecycle properties through the node.
 func (c *Client) EditItem(ctx context.Context, r client.EditItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, EditSubject, r)
 }
 
+// TransitionItem moves the status through the node.
 func (c *Client) TransitionItem(ctx context.Context, r client.TransitionItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, TransitionSubject, r)
 }
 
+// ClaimItem records intent to work, or steals, through the node.
 func (c *Client) ClaimItem(ctx context.Context, r client.ClaimItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, ClaimSubject, r)
 }
 
+// ReleaseItem hands a claim back through the node.
 func (c *Client) ReleaseItem(ctx context.Context, r client.ReleaseItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, ReleaseSubject, r)
 }
 
+// BlockItem blocks an item through the node.
 func (c *Client) BlockItem(ctx context.Context, r client.BlockItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, BlockSubject, r)
 }
 
+// UnblockItem restores the status a block interrupted.
 func (c *Client) UnblockItem(ctx context.Context, r client.UnblockItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, UnblockSubject, r)
 }
 
+// LinkItem asserts a typed edge through the node.
 func (c *Client) LinkItem(ctx context.Context, r client.LinkItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, LinkSubject, r)
 }
 
+// UnlinkItem retracts a typed edge through the node.
 func (c *Client) UnlinkItem(ctx context.Context, r client.LinkItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, UnlinkSubject, r)
 }
 
+// NoteItem appends a trail entry through the node.
 func (c *Client) NoteItem(ctx context.Context, r client.NoteItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, NoteSubject, r)
 }
 
+// TombstoneItem voids a filing mistake through the node.
 func (c *Client) TombstoneItem(ctx context.Context, r client.TombstoneItemRequest) (contract.Item, error) {
 	return write[contract.Item](ctx, c, TombstoneSubject, r)
 }
