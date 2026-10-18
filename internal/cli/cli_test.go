@@ -31,7 +31,7 @@ func startStore(t *testing.T) *harness {
 }
 
 func (h *harness) connector() cli.Connector {
-	return func(string) (client.Client, func(), error) {
+	return func(string, string) (client.Client, func(), error) {
 		return chronicle.New(h.cc, chronicletest.Store), func() {}, nil
 	}
 }
@@ -39,7 +39,7 @@ func (h *harness) connector() cli.Connector {
 // guardConnector fails the test the moment a command touches the wire — for
 // invocations that must be rejected during argument validation.
 func guardConnector(t *testing.T) cli.Connector {
-	return func(string) (client.Client, func(), error) {
+	return func(string, string) (client.Client, func(), error) {
 		t.Error("connector called: command should fail before connecting")
 		return nil, nil, errors.New("no connection in this test")
 	}

@@ -25,12 +25,13 @@ import (
 // Connector opens the client the server talks through, with the function
 // that closes its connection. Production use dials a chronicle context;
 // tests inject a client on an in-process chronicle.
-type Connector func(contextName string) (client.Client, func(), error)
+type Connector func(contextName, actor string) (client.Client, func(), error)
 
-// ContextConnector dials the named chronicle context ("" means the
-// selected one).
-func ContextConnector(contextName string) (client.Client, func(), error) {
-	return dial.Context(contextName)
+// ContextConnector dials the named context ("" means the selection) as
+// the dial seam chooses: the store on chronicle, or a 0.7 fleet, with
+// the --actor flag's value.
+func ContextConnector(contextName, actor string) (client.Client, func(), error) {
+	return dial.Context(contextName, actor)
 }
 
 // defaultInitiative is indirected so Run's connect parameter keeps its
@@ -44,7 +45,8 @@ var defaultInitiative = config.DefaultInitiative
 func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector) error {
 	fs := flag.NewFlagSet("hits-mcp", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	ctxName := fs.String("context", "", "chronicle context to connect with (default: the selected one)")
+	ctxName := fs.String("context", "", "context to connect with: chronicle's, or a hits context of a 0.7 fleet (default: the selection)")
+	actor := fs.String("actor", "", "acting handle for writes on a hits context (default: $HITS_ACTOR, else the hits config's default); refused on a chronicle context")
 	initiativeFlag := fs.String("initiative", "", "filing default for create_item when the call names none (default: $HITS_INITIATIVE, else the selected initiative)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,7 +67,7 @@ func Run(ctx context.Context, args []string, errOut io.Writer, connect Connector
 	if initiative != "" && !contract.ValidInitiativeSlug(initiative) {
 		return fmt.Errorf("initiative %q is not a well-formed initiative slug", initiative)
 	}
-	c, closeConn, err := connect(*ctxName)
+	c, closeConn, err := connect(*ctxName, *actor)
 	if err != nil {
 		return err
 	}
