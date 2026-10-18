@@ -14,6 +14,7 @@ import (
 	chron "github.com/impire-io/chronicle/client"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/mcp"
@@ -34,7 +35,7 @@ func startStore(t *testing.T) *harness {
 // harness's client — the same server production runs over stdio.
 func session(t *testing.T, h *harness) *sdk.ClientSession {
 	t.Helper()
-	srv := mcp.NewServer(client.New(h.cc, chronicletest.Store), "hits")
+	srv := mcp.NewServer(chronicle.New(h.cc, chronicletest.Store), "hits")
 	st, ct := sdk.NewInMemoryTransports()
 	ctx := context.Background()
 	if _, err := srv.Connect(ctx, st, nil); err != nil {
@@ -102,7 +103,7 @@ func resultText(res *sdk.CallToolResult) string {
 // guardConnector fails the test the moment the server touches the wire —
 // for boots that must be rejected during validation.
 func guardConnector(t *testing.T) mcp.Connector {
-	return func(string) (*client.Client, func(), error) {
+	return func(string, string) (client.Client, func(), error) {
 		t.Error("connector called: the server should fail before connecting")
 		return nil, nil, errors.New("no connection in this test")
 	}
@@ -383,7 +384,7 @@ func TestRunFailsFast(t *testing.T) {
 		t.Errorf("bad initiative: err = %v, want a form error", err)
 	}
 
-	err = mcp.Run(testCtx(t), nil, &errOut, func(string) (*client.Client, func(), error) {
+	err = mcp.Run(testCtx(t), nil, &errOut, func(string, string) (client.Client, func(), error) {
 		return nil, nil, errors.New("chronicle context missing")
 	})
 	if err == nil || !strings.Contains(err.Error(), "context missing") {

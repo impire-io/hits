@@ -39,7 +39,7 @@ type graphWalkIn struct {
 	Types     []string        `json:"types,omitempty" jsonschema:"narrow to the named edge types"`
 }
 
-func addQueryTools(s *sdk.Server, c *client.Client) {
+func addQueryTools(s *sdk.Server, c client.Client) {
 	sdk.AddTool(s, &sdk.Tool{Name: "search_items", Description: "Full-text search over reports and notes; hits resolve to item ids — read state with get_item.", Annotations: readOnly},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in searchItemsIn) (*sdk.CallToolResult, client.SearchReply, error) {
 			r, err := c.SearchItems(ctx, client.SearchRequest{

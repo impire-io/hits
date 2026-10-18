@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	ccli "github.com/impire-io/chronicle/cli"
 	chron "github.com/impire-io/chronicle/client"
 	"github.com/impire-io/chronicle/devdir"
 	"github.com/impire-io/chronicle/index/semantic"
 	"github.com/impire-io/chronicle/up"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 )
 
@@ -32,9 +34,9 @@ func Start(t *testing.T) *chron.Client {
 }
 
 // Client is Start with the HITS client on it.
-func Client(t *testing.T) *client.Client {
+func Client(t *testing.T) *chronicle.Client {
 	t.Helper()
-	return client.New(Start(t), Store)
+	return chronicle.New(Start(t), Store)
 }
 
 // StartWith is Start with the quick start's embedding provider set, so
@@ -51,15 +53,23 @@ func StartWith(t *testing.T, embedding *semantic.ProviderConfig) *chron.Client {
 		t.Fatalf("chronicle up: %v", err)
 	}
 	t.Cleanup(l.Stop)
+	// The context chronicle's own `up` would save: the dial seam's tests
+	// load it as the selection.
+	if err := ccli.SaveLocalContext(l.URL, dir); err != nil {
+		t.Fatalf("save the local context: %v", err)
+	}
+	if err := ccli.SelectContext(ccli.LocalContextName); err != nil {
+		t.Fatalf("select the local context: %v", err)
+	}
 	cc, err := chron.ConnectNkeyFile(l.URL, devdir.UserNkeyPath(dir), "admin")
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	t.Cleanup(cc.Close)
-	if err := client.Init(ctx, cc, Store, "test"); err != nil {
+	if err := chronicle.Init(ctx, cc, Store, "test"); err != nil {
 		t.Fatalf("store init: %v", err)
 	}
-	c := client.New(cc, Store)
+	c := chronicle.New(cc, Store)
 	if _, err := c.RegisterInitiative(ctx, client.RegisterInitiativeRequest{Slug: Initiative, Name: "The HITS platform"}); err != nil {
 		t.Fatalf("register initiative %s: %v", Initiative, err)
 	}

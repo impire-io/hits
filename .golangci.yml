@@ -19,10 +19,10 @@ linters:
             - pkg: github.com/impire-io/hits
               desc: the contract package imports no other hits package
         client-speaks-contract-only:
-          files: ["**/client/*.go", "!$test"]
+          files: ["**/client/**", "!$test"]
           deny:
             - pkg: github.com/impire-io/hits/internal
-              desc: the client package is the wire surface; it never reaches into a service
+              desc: the client packages are the wire surface; they never reach into a service
         adapters-speak-client-only:
           files: ["**/internal/cli/**", "**/internal/mcp/**", "!$test"]
           deny:

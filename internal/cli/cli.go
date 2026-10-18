@@ -13,16 +13,17 @@ import (
 	"strings"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/internal/dial"
 	"github.com/impire-io/hits/internal/version"
 )
 
-const usageText = `hits — a HITS client, on chronicle
+const usageText = `hits — a HITS client: on chronicle, or on a 0.7 fleet
 
 Usage:
-  hits [--context <chronicle context>] [--json] <command> [flags] [args]
+  hits [--context <name>] [--actor <handle>] [--json] <command> [flags] [args]
 
-Item commands (the author of every write is the context's principal):
+Item commands:
   create      open an item:           create --type <t> [flags] <report>
   get         one item's snapshot:    get <id>
   edit        non-lifecycle changes:  edit <id> [flags]
@@ -58,17 +59,27 @@ Audit (git as evidence, the tracker as the record):
 The store (a HITS is one store in a chronicle account):
   store       declare a HITS in the context's account: store init [--version <v>] |
               print the install manifest: store manifest
-  migrate     move a running install's hits-ops stream into the store:
-              migrate --from <hits context>  (one release's verb)
+  migrate     move a 0.7 fleet's hits-ops stream into the store:
+              migrate --from <hits context>
+
+Contexts of a 0.7 fleet ($XDG_CONFIG_HOME/hits/context):
+  context     manage hits contexts: ls | add | import | edit | rm | select
+  auth        IDP device-flow login: login | status | logout  [--context <name>]
 
 Service:
+  ping        name what answers: the store's announcement, or the 0.7 node
   version     print the client version
 
-The connection is a chronicle context: 'chronicle login' for the hosted
-account, 'chronicle context add' for a credential on your own NATS;
---context names one, else the selection (CHRONICLE_CONTEXT). Global flags
-go before the command, command flags after the leading <id>.
-Run 'hits <command> -h' for a command's flags.
+The context chooses the substrate. A chronicle context — 'chronicle login'
+for the hosted account, 'chronicle context add' for a credential on your
+own NATS — reaches the store on chronicle; its author is the context's
+principal, and --actor is refused. A hits context ('hits context add')
+reaches a fleet frozen at the 0.7.0 release; a write there needs --actor,
+$HITS_ACTOR, or the hits config's default. --context names one, resolved
+against chronicle's contexts first, then hits's; without it, chronicle's
+selection, else hits's default. Global flags go before the command,
+command flags after the leading <id>. Run 'hits <command> -h' for a
+command's flags.
 `
 
 // defaultFan is the default --fan wherever a command keeps a window of
@@ -76,14 +87,15 @@ Run 'hits <command> -h' for a command's flags.
 const defaultFan = 8
 
 // Connector opens the client a command talks through, with the function
-// that closes its connection. Production use dials a chronicle context;
-// tests inject a client on an in-process chronicle.
-type Connector func(contextName string) (*client.Client, func(), error)
+// that closes its connection. Production use dials a context — chronicle's
+// or a hits context — with the --actor flag's value; tests inject a client
+// on an in-process substrate.
+type Connector func(contextName, actor string) (client.Client, func(), error)
 
-// ContextConnector dials the named chronicle context ("" means the
-// selected one).
-func ContextConnector(contextName string) (*client.Client, func(), error) {
-	return dial.Context(contextName)
+// ContextConnector dials the named context ("" means the selection) as
+// the dial seam chooses: the store on chronicle, or a 0.7 fleet.
+func ContextConnector(contextName, actor string) (client.Client, func(), error) {
+	return dial.Context(contextName, actor)
 }
 
 // invocation carries one parsed CLI call: the global flags, the arguments
@@ -94,6 +106,7 @@ type invocation struct {
 	errOut      io.Writer
 	connect     Connector
 	contextName string
+	actor       string
 	json        bool
 	args        []string
 }
@@ -103,7 +116,8 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 	fs := flag.NewFlagSet("hits", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	fs.Usage = func() { fmt.Fprint(errOut, usageText) }
-	ctxName := fs.String("context", "", "chronicle context to connect with (default: the selected one)")
+	ctxName := fs.String("context", "", "context to connect with: chronicle's, or a hits context of a 0.7 fleet (default: the selection)")
+	actor := fs.String("actor", "", "acting handle for writes on a hits context (default: $HITS_ACTOR, else the hits config's default); refused on a chronicle context")
 	jsonOut := fs.Bool("json", false, "print replies as indented JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -111,7 +125,7 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 
 	inv := &invocation{
 		ctx: ctx, out: out, errOut: errOut, connect: connect,
-		contextName: *ctxName, json: *jsonOut,
+		contextName: *ctxName, actor: *actor, json: *jsonOut,
 	}
 	if fs.NArg() > 0 {
 		inv.args = fs.Args()[1:]
@@ -162,6 +176,12 @@ func Run(ctx context.Context, args []string, out, errOut io.Writer, connect Conn
 		return runStore(inv)
 	case "migrate":
 		return runMigrate(inv)
+	case "context":
+		return runContext(inv)
+	case "auth":
+		return runAuth(inv)
+	case "ping":
+		return runPing(inv)
 	case "version":
 		fmt.Fprintln(out, version.Version)
 		return nil
@@ -185,14 +205,51 @@ func (inv *invocation) flagSet(name, usage string) *flag.FlagSet {
 	return fs
 }
 
-// dial connects through the chronicle context; the returned func closes
-// the connection.
-func (inv *invocation) dial() (*client.Client, func(), error) {
-	c, closeConn, err := inv.connect(inv.contextName)
+// dial connects through the context; the returned func closes the
+// connection.
+func (inv *invocation) dial() (client.Client, func(), error) {
+	c, closeConn, err := inv.connect(inv.contextName, inv.actor)
 	if err != nil {
 		return nil, nil, err
 	}
 	return c, closeConn, nil
+}
+
+// runPing names what answers on the context: the store's announcement on
+// chronicle, the node on a 0.7 fleet.
+func runPing(inv *invocation) error {
+	c, closeConn, err := inv.dial()
+	if err != nil {
+		return err
+	}
+	defer closeConn()
+	about, err := c.Ping(inv.ctx)
+	if err != nil {
+		return err
+	}
+	if inv.json {
+		return emit(inv.out, about)
+	}
+	fmt.Fprintf(inv.out, "%s %s\n", about.Name, about.Version)
+	return nil
+}
+
+// errNotChronicle is a verb that speaks to chronicle alone — store init,
+// migrate, the audit's cutover read — dialled on a 0.7 fleet.
+var errNotChronicle = errors.New("this verb speaks to a chronicle context; the context dialled is a 0.7 fleet")
+
+// dialChronicle is dial for the verbs that are chronicle's alone.
+func (inv *invocation) dialChronicle() (*chronicle.Client, func(), error) {
+	c, closeConn, err := inv.dial()
+	if err != nil {
+		return nil, nil, err
+	}
+	cc, ok := c.(*chronicle.Client)
+	if !ok {
+		closeConn()
+		return nil, nil, errNotChronicle
+	}
+	return cc, closeConn, nil
 }
 
 // errFlagsFirst signals that the first argument is a flag where a positional

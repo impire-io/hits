@@ -12,6 +12,7 @@ import (
 	chron "github.com/impire-io/chronicle/client"
 
 	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/chronicletest"
 	"github.com/impire-io/hits/internal/cli"
@@ -30,15 +31,15 @@ func startStore(t *testing.T) *harness {
 }
 
 func (h *harness) connector() cli.Connector {
-	return func(string) (*client.Client, func(), error) {
-		return client.New(h.cc, chronicletest.Store), func() {}, nil
+	return func(string, string) (client.Client, func(), error) {
+		return chronicle.New(h.cc, chronicletest.Store), func() {}, nil
 	}
 }
 
 // guardConnector fails the test the moment a command touches the wire — for
 // invocations that must be rejected during argument validation.
 func guardConnector(t *testing.T) cli.Connector {
-	return func(string) (*client.Client, func(), error) {
+	return func(string, string) (client.Client, func(), error) {
 		t.Error("connector called: command should fail before connecting")
 		return nil, nil, errors.New("no connection in this test")
 	}
@@ -453,7 +454,7 @@ func TestCreateRequiresInitiative(t *testing.T) {
 // query finds the expected number of items.
 func waitSearch(t *testing.T, h *harness, query string, total uint64) {
 	t.Helper()
-	c := client.New(h.cc, chronicletest.Store)
+	c := chronicle.New(h.cc, chronicletest.Store)
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		r, err := c.SearchItems(testCtx(t), client.SearchRequest{Query: query})
@@ -470,7 +471,7 @@ func waitSearch(t *testing.T, h *harness, query string, total uint64) {
 // waitEdges polls the graph index until the item has at least n edges.
 func waitEdges(t *testing.T, h *harness, id string, n int) {
 	t.Helper()
-	c := client.New(h.cc, chronicletest.Store)
+	c := chronicle.New(h.cc, chronicletest.Store)
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		r, err := c.GraphNeighbors(testCtx(t), client.NeighborsRequest{Kind: client.NodeItem, ID: id})
@@ -482,4 +483,11 @@ func waitEdges(t *testing.T, h *harness, id string, n int) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// TestPingNamesTheStore: ping on a chronicle context is the store's
+// announcement.
+func TestPingNamesTheStore(t *testing.T) {
+	h := startStore(t)
+	wantContains(t, run(t, h.connector(), "ping"), "hits test")
 }

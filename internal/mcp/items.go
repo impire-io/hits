@@ -126,7 +126,7 @@ type listReleasesIn struct {
 
 type emptyIn struct{}
 
-func addItemTools(s *sdk.Server, c *client.Client, initiative string) {
+func addItemTools(s *sdk.Server, c client.Client, initiative string) {
 	sdk.AddTool(s, &sdk.Tool{Name: "create_item", Description: "Open an item; the context's principal becomes the reporter. A task must name located-in; the initiative names the ID's mint."},
 		func(ctx context.Context, _ *sdk.CallToolRequest, in createItemIn) (*sdk.CallToolResult, contract.Item, error) {
 			init := in.Initiative

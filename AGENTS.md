@@ -46,7 +46,7 @@ non-negotiables.
 
 - `cmd/hits` — CLI binary; thin main over `internal/cli` (testable `Run` with
   an injectable connector). Its `store init` declares a HITS in a chronicle
-  account; `migrate` (release 0.8.0 only) moves a fleet-era install in.
+  account; `migrate` moves a 0.7 fleet's install in.
 - `cmd/hits-mcp` — the MCP server binary, the agent action surface; thin main
   over `internal/mcp` (stdio MCP via the official Go SDK, one tool per client
   method). An adapter like the CLI, never a service.
@@ -54,16 +54,24 @@ non-negotiables.
   vocabulary models, invariants, the pure fold, and `state.go` — the mapping
   between the model and chronicle's state (paths, `ItemState`, `Diff`). It
   imports no other hits package (depguard-enforced).
-- `client` — the public Go client package on chronicle's Go client
-  (`hits-hq/02-DESIGN/the-client.md`): the store's declarations (`store.go`),
-  the write loop, the reads and the three queries. Imports `contract` and
-  chronicle; never `internal` (depguard-enforced).
-- `internal/dial` — the one connection seam: a chronicle context, loaded and
-  dialled as chronicle's CLI dials it. Never a hand-rolled URL.
+- `client` — the public Go surface: the request and reply types and the
+  `Client` interface the two substrates implement (`hits-hq` decision 0023,
+  `02-DESIGN/the-client.md`). `client/chronicle` is the store on chronicle:
+  its declarations (`store.go`), the write loop, the reads and the three
+  queries. `client/fleet` is the wire contract of the 0.7 fleet, frozen at
+  v0.7.0, the actor given at construction. `client/clienttest` is the
+  surface suite both run. None imports `internal` (depguard-enforced).
+- `internal/dial` — the one connection seam, and where the substrate is
+  chosen: a chronicle context, loaded and dialled as chronicle's CLI dials
+  it, or a hits context dialled to the fleet with its actor. Never a
+  hand-rolled URL.
 - `internal/config` — the selected initiative, the client's one piece of
   configuration.
-- `internal/connect` — the fleet-era hits contexts, kept for `migrate` alone;
-  leaves with release 0.9.0.
+- `internal/connect` — hits contexts and the token exchange for them: the
+  fleet's connection, and what `migrate` reads through.
 - `internal/chronicletest` — chronicle's quick start in-process for every
-  test suite.
+  test suite; `internal/fleettest` — the v0.7.0 fleet built from its tag
+  (into the user cache, `HITS_FLEET_BIN` overrides) and run on the embedded
+  NATS, the compatibility target as itself; `internal/embedtest` — the fake
+  embedding endpoint both meaning indexes use in tests.
 - `internal/version` — the build-stamped version shared by both binaries.

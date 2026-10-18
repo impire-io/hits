@@ -16,7 +16,7 @@ import (
 
 	ccontract "github.com/impire-io/chronicle/contract"
 
-	"github.com/impire-io/hits/client"
+	"github.com/impire-io/hits/client/chronicle"
 	"github.com/impire-io/hits/contract"
 	"github.com/impire-io/hits/internal/connect"
 )
@@ -44,7 +44,7 @@ func runMigrate(inv *invocation) error {
 		fs.Usage()
 		return errors.New("migrate: --from <hits context> is required")
 	}
-	c, closeConn, err := inv.dial()
+	c, closeConn, err := inv.dialChronicle()
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func runMigrate(inv *invocation) error {
 type migration struct {
 	ctx    context.Context
 	out    interface{ Write([]byte) (int, error) }
-	c      *client.Client
+	c      *chronicle.Client
 	hc     *nats.Conn
 	js     jetstream.JetStream
 	stream string

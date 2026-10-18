@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,4 +56,26 @@ func natsContextDir() string { return filepath.Join(configDir(), "nats", "contex
 // separators.
 func validName(name string) bool {
 	return name != "" && !strings.Contains(name, "..") && !strings.Contains(name, string(os.PathSeparator))
+}
+
+// Resolve names the hits context a connection would use — the explicit
+// name, else the client config's default — and whether its document
+// exists. "" with ok false is nothing configured. The dial seam asks it
+// before connecting, so a name can be weighed against chronicle's own
+// contexts (decision 0023).
+func Resolve(explicit string) (name string, ok bool, err error) {
+	name, err = effectiveName(explicit)
+	if err != nil || name == "" {
+		return "", false, err
+	}
+	if !validName(name) {
+		return name, false, fmt.Errorf("invalid context name %q", name)
+	}
+	if _, err := os.Stat(filepath.Join(hitsContextDir(), name+".json")); err != nil {
+		if os.IsNotExist(err) {
+			return name, false, nil
+		}
+		return name, false, fmt.Errorf("context %q: %w", name, err)
+	}
+	return name, true, nil
 }
